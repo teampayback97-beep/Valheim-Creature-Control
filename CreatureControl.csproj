@@ -1,0 +1,86 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Valheim's own assemblies reference mscorlib 4.0.0.0 (not netstandard),
+         and every working mod in this profile targets .NETFramework v4.8.
+         Targeting netstandard here produces CS0012 "type is defined in an
+         assembly that is not referenced" the moment a game signature is used. -->
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>CreatureControl</AssemblyName>
+    <RootNamespace>CreatureControl</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <DebugType>none</DebugType>
+    <NoWarn>$(NoWarn);CS0649</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets the plain .NET SDK build a net48 project without Visual Studio or
+         a separately installed targeting pack. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!-- ===================================================================
+       Paths. Change these two if you move Valheim or switch Gale profile.
+       =================================================================== -->
+  <PropertyGroup>
+    <ValheimManaged>C:\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed</ValheimManaged>
+    <GaleProfile>C:\Users\Teamp\AppData\Roaming\com.kesomannen.gale\valheim\profiles\Default</GaleProfile>
+    <BepInExCore>$(GaleProfile)\BepInEx\core</BepInExCore>
+    <PluginOut>$(GaleProfile)\BepInEx\plugins\CreatureControl</PluginOut>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Valheim 1.0 moved the game code out of Assembly-CSharp.dll (now a 23 KB
+         stub) into assembly_valheim.dll. Referencing the stub finds nothing. -->
+    <Reference Include="assembly_valheim">
+      <HintPath>$(ValheimManaged)\assembly_valheim.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="assembly_utils">
+      <HintPath>$(ValheimManaged)\assembly_utils.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ValheimManaged)\UnityEngine.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ValheimManaged)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(ValheimManaged)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AIModule">
+      <HintPath>$(ValheimManaged)\UnityEngine.AIModule.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(ValheimManaged)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx">
+      <HintPath>$(BepInExCore)\BepInEx.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BepInExCore)\0Harmony.dll</HintPath><Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Fail with one clear message rather than 200 "type not found" errors. -->
+  <Target Name="CheckPaths" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(ValheimManaged)\assembly_valheim.dll')"
+           Text="Can't find assembly_valheim.dll under &quot;$(ValheimManaged)&quot;. Edit ValheimManaged in CreatureControl.csproj." />
+    <Error Condition="!Exists('$(BepInExCore)\BepInEx.dll')"
+           Text="Can't find BepInEx.dll under &quot;$(BepInExCore)&quot;. Edit GaleProfile in CreatureControl.csproj." />
+  </Target>
+
+  <!-- Drop the built mod straight into the profile's plugins folder. -->
+  <Target Name="Deploy" AfterTargets="Build">
+    <MakeDir Directories="$(PluginOut)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PluginOut)" ContinueOnError="true" />
+    <Message Importance="high" Text="  -&gt; deployed to $(PluginOut)\CreatureControl.dll" />
+  </Target>
+
+</Project>

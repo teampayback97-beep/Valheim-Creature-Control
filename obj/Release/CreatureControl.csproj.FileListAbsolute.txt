@@ -1,0 +1,7 @@
+C:\Users\Teamp\AppData\Roaming\com.kesomannen.gale\valheim\profiles\Default\BepInEx\_dev\CreatureControl\bin\Release\CreatureControl.dll
+C:\Users\Teamp\AppData\Roaming\com.kesomannen.gale\valheim\profiles\Default\BepInEx\_dev\CreatureControl\obj\Release\CreatureControl.csproj.AssemblyReference.cache
+C:\Users\Teamp\AppData\Roaming\com.kesomannen.gale\valheim\profiles\Default\BepInEx\_dev\CreatureControl\obj\Release\CreatureControl.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Teamp\AppData\Roaming\com.kesomannen.gale\valheim\profiles\Default\BepInEx\_dev\CreatureControl\obj\Release\CreatureControl.AssemblyInfoInputs.cache
+C:\Users\Teamp\AppData\Roaming\com.kesomannen.gale\valheim\profiles\Default\BepInEx\_dev\CreatureControl\obj\Release\CreatureControl.AssemblyInfo.cs
+C:\Users\Teamp\AppData\Roaming\com.kesomannen.gale\valheim\profiles\Default\BepInEx\_dev\CreatureControl\obj\Release\CreatureControl.csproj.CoreCompileInputs.cache
+C:\Users\Teamp\AppData\Roaming\com.kesomannen.gale\valheim\profiles\Default\BepInEx\_dev\CreatureControl\obj\Release\CreatureControl.dll

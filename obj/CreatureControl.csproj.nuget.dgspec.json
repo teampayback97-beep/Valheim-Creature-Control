@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\Users\\Teamp\\AppData\\Roaming\\com.kesomannen.gale\\valheim\\profiles\\Default\\BepInEx\\_dev\\CreatureControl\\CreatureControl.csproj": {}
+  },
+  "projects": {
+    "C:\\Users\\Teamp\\AppData\\Roaming\\com.kesomannen.gale\\valheim\\profiles\\Default\\BepInEx\\_dev\\CreatureControl\\CreatureControl.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\Teamp\\AppData\\Roaming\\com.kesomannen.gale\\valheim\\profiles\\Default\\BepInEx\\_dev\\CreatureControl\\CreatureControl.csproj",
+        "projectName": "CreatureControl",
+        "projectPath": "C:\\Users\\Teamp\\AppData\\Roaming\\com.kesomannen.gale\\valheim\\profiles\\Default\\BepInEx\\_dev\\CreatureControl\\CreatureControl.csproj",
+        "packagesPath": "C:\\Users\\Teamp\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\Teamp\\AppData\\Roaming\\com.kesomannen.gale\\valheim\\profiles\\Default\\BepInEx\\_dev\\CreatureControl\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\Teamp\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net48"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net48": {
+            "targetAlias": "net48",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net48": {
+          "targetAlias": "net48",
+          "dependencies": {
+            "Microsoft.NETFramework.ReferenceAssemblies": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[1.0.3, )"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.425\\RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}
