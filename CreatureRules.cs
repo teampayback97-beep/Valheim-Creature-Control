@@ -53,6 +53,13 @@ namespace CreatureControl
         /// grown drake, not a baby.</summary>
         public bool? Baby;
 
+        /// <summary>Instinctive smoke/fire avoidance, independent of the fear
+        /// system: steers away from any nearby player fire source whether or
+        /// not it has a target, and whether or not it is otherwise fearless.
+        /// Real mosquitoes avoid smoke - a Deathsquito is not weighing a
+        /// fight, it just will not fly through fire.</summary>
+        public bool? AvoidsFire;
+
         public bool? StanceCycling;
 
         /// <summary>Copy any value this rule has no opinion about from a less
@@ -75,6 +82,7 @@ namespace CreatureControl
             if (!Threat.HasValue) Threat = lower.Threat;
             if (!Fearless.HasValue) Fearless = lower.Fearless;
             if (!Baby.HasValue) Baby = lower.Baby;
+            if (!AvoidsFire.HasValue) AvoidsFire = lower.AvoidsFire;
             if (!RallyRadius.HasValue) RallyRadius = lower.RallyRadius;
             if (!Solitary.HasValue) Solitary = lower.Solitary;
             if (!Sight.HasValue) Sight = lower.Sight;
@@ -93,7 +101,7 @@ namespace CreatureControl
             !FleeIfNotAlerted.HasValue &&
             !Threat.HasValue && !Fearless.HasValue && !Baby.HasValue &&
             !RallyRadius.HasValue && !Solitary.HasValue && !Sight.HasValue && !AlwaysFlee.HasValue &&
-            !StanceCycling.HasValue && !FactionId.HasValue;
+            !StanceCycling.HasValue && !FactionId.HasValue && !AvoidsFire.HasValue;
     }
 
     /// <summary>

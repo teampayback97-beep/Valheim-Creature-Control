@@ -60,6 +60,9 @@ namespace CreatureControl
         static ConfigEntry<float> _tamedRegen;
         static ConfigEntry<bool> _tameStructures;
 
+        static ConfigEntry<bool> _fireAvoidOn;
+        static ConfigEntry<float> _fireAvoidRadius;
+
         public static bool Verbose => _verbose != null && _verbose.Value;
         public static bool AllowStanceCycling => _cycling == null || _cycling.Value;
         public static float GrudgeSeconds => _grudge == null ? 30f : _grudge.Value;
@@ -69,6 +72,13 @@ namespace CreatureControl
         public static bool FearEnabled => _fearOn == null || _fearOn.Value;
         public static float FearRadius => _fearRadius == null ? 20f : _fearRadius.Value;
         public static float FearInterval => _fearInterval == null ? 2f : _fearInterval.Value;
+
+        /// <summary>Instinctive smoke/fire avoidance - separate from the
+        /// danger-score fear system. Applies only to creatures with
+        /// avoidsFire = true in their rule (Deathsquito by default), and
+        /// applies even to creatures the fear system treats as fearless.</summary>
+        public static bool FireAvoidEnabled => _fireAvoidOn == null || _fireAvoidOn.Value;
+        public static float FireAvoidRadius => _fireAvoidRadius == null ? 6f : _fireAvoidRadius.Value;
         public static float StarThreatScale => _starScale == null ? 0.6f : _starScale.Value;
         public static float PetThreatWeight => _petWeight == null ? 0.5f : _petWeight.Value;
         public static float PlayerThreatScale => _playerScale == null ? 1f : _playerScale.Value;
@@ -278,6 +288,15 @@ namespace CreatureControl
                     "No band member may be further than this from the creature that started it, " +
                     "so an unbroken line of creatures cannot chain across the map.",
                     new AcceptableValueRange<float>(10f, 200f)));
+
+            _fireAvoidOn = Config.Bind("Fear", "Enable Fire Avoidance", true,
+                "Creatures flagged avoidsFire (Deathsquito by default) steer away from campfires, " +
+                "bonfires and other player fire sources - real mosquitoes avoid smoke, this is the " +
+                "same instinct, not the danger-score fear check. Applies even to fearless creatures.");
+            _fireAvoidRadius = Config.Bind("Fear", "Fire Avoidance Radius", 6f,
+                new ConfigDescription(
+                    "How close a fire-avoiding creature lets a flame get before it steers off.",
+                    new AcceptableValueRange<float>(2f, 20f)));
 
             _catalog = Config.Bind("Diagnostics", "Write Creature Catalog", true,
                 "Once per world load, write every registered creature prefab and the live spawn " +
@@ -519,6 +538,15 @@ namespace CreatureControl
                     "No band member may be further than this from the creature that started it, " +
                     "so an unbroken line of creatures cannot chain across the map.",
                     new AcceptableValueRange<float>(10f, 200f)));
+
+            _fireAvoidOn = Config.Bind("Fear", "Enable Fire Avoidance", true,
+                "Creatures flagged avoidsFire (Deathsquito by default) steer away from campfires, " +
+                "bonfires and other player fire sources - real mosquitoes avoid smoke, this is the " +
+                "same instinct, not the danger-score fear check. Applies even to fearless creatures.");
+            _fireAvoidRadius = Config.Bind("Fear", "Fire Avoidance Radius", 6f,
+                new ConfigDescription(
+                    "How close a fire-avoiding creature lets a flame get before it steers off.",
+                    new AcceptableValueRange<float>(2f, 20f)));
 
             LoadConfigs();
             ReapplyToLoadedCreatures();

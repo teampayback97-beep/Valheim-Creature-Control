@@ -291,6 +291,11 @@ namespace CreatureControl
                         else Warn(l, $"expected true/false, got '{l.Value}'");
                         break;
 
+                    case "avoidsfire":
+                        if (bool.TryParse(l.Value, out var avf)) rule.AvoidsFire = avf;
+                        else Warn(l, $"expected true/false, got '{l.Value}'");
+                        break;
+
                     case "stancecycling":
                         if (bool.TryParse(l.Value, out var sc)) rule.StanceCycling = sc;
                         else Warn(l, $"expected true/false, got '{l.Value}'");

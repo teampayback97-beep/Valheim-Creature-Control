@@ -237,15 +237,25 @@ namespace CreatureControl
             // If BaseAI.Flee could not be bound there is nothing to route the
             // creature into, and taking the tick anyway would leave it standing
             // still forever. Fall through to vanilla instead.
-            if (!Plugin.FearEnabled || !Threat.Available) return true;
+            if (!Threat.Available) return true;
 
             var st = CreatureState.For(__instance.gameObject.GetComponent<Character>());
-            if (st == null || !st.FearApplies) return true;
+            if (st == null) return true;
 
             // A creature we tried and failed to move is handed back to vanilla
-            // for a while. Worst case the fear system does nothing; it must never
-            // be worse than not having it.
+            // for a while. Worst case nothing here fires; it must never be
+            // worse than not having it.
             if (st.FearBroken) return true;
+
+            // Fire avoidance runs first and needs no target: a Deathsquito
+            // is not weighing a fight, it just will not fly through smoke -
+            // same instinct whether or not it has an enemy right now, and
+            // whether or not it is Fearless for the combat check below.
+            if (Plugin.FireAvoidEnabled && st.AvoidsFire &&
+                st.WantsToAvoidFire(out var fireFrom))
+                return DriveAwayFrom(__instance, st, dt, fireFrom, ref __result);
+
+            if (!Plugin.FearEnabled || !st.FearApplies) return true;
 
             // No target means nothing to be afraid of, and it also means vanilla
             // needs this tick to go looking for one.
@@ -254,24 +264,33 @@ namespace CreatureControl
 
             if (!st.WantsToFlee(target, out var from)) return true;
 
-            // From here we are taking the tick over, so we owe the creature
-            // everything MonsterAI.UpdateAI would have done before its own flee
-            // branch. Its first two statements are:
-            //
-            //     if (!base.UpdateAI(dt)) return false;
-            //     UpdateSleep(dt); if (IsSleeping()) return true;
-            //
-            // base.UpdateAI is the shared tick - the ZNetView ownership gate,
-            // takeoff/landing, regeneration, and the jump, random-move and
-            // time-since-hurt timers. Skipping it is why the first build left
-            // creatures standing still: they had decided to run and then never
-            // got the tick that moves them.
-            if (!Threat.BaseTick(__instance, dt)) { __result = false; return false; }
+            return DriveAwayFrom(__instance, st, dt, from, ref __result);
+        }
+
+        /// <summary>
+        /// From here we are taking the tick over, so we owe the creature
+        /// everything MonsterAI.UpdateAI would have done before its own flee
+        /// branch. Its first two statements are:
+        ///
+        ///     if (!base.UpdateAI(dt)) return false;
+        ///     UpdateSleep(dt); if (IsSleeping()) return true;
+        ///
+        /// base.UpdateAI is the shared tick - the ZNetView ownership gate,
+        /// takeoff/landing, regeneration, and the jump, random-move and
+        /// time-since-hurt timers. Skipping it is why the first build left
+        /// creatures standing still: they had decided to run and then never
+        /// got the tick that moves them. Shared by both the danger-score
+        /// flee and fire avoidance - once a creature has decided to leave a
+        /// spot, getting it moving is identical either way.
+        /// </summary>
+        static bool DriveAwayFrom(MonsterAI ai, CreatureState st, float dt, Vector3 from, ref bool __result)
+        {
+            if (!Threat.BaseTick(ai, dt)) { __result = false; return false; }
 
             // A sleeping creature has no opinion about the odds. Vanilla checks
             // this before it would ever reach a flee, and waking on fear alone
             // would make every sleeping troll and Bjorn bolt on sight.
-            if (__instance.IsSleeping()) { __result = true; return false; }
+            if (ai.IsSleeping()) { __result = true; return false; }
 
             // BaseAI.Flee ends with:
             //     MoveTo(dt, m_fleeTarget, 1f, IsAlerted());
@@ -283,15 +302,15 @@ namespace CreatureControl
             //
             // SetAlerted early-returns when the value is unchanged, so this is
             // free after the first tick and writes no ZDO while it runs.
-            __instance.Alert();
+            ai.Alert();
 
             // NB: BaseAI.Flee returns MoveTo's result, and MoveTo returns TRUE
             // when it has STOPPED - either arrived or failed to path - and FALSE
             // while it is still running. It is not a success flag, so it tells us
             // nothing useful about whether the creature got away. Progress is
             // measured by whether it actually moved.
-            Threat.Flee(__instance, dt, from);
-            st.NoteFleeProgress(__instance.transform.position);
+            Threat.Flee(ai, dt, from);
+            st.NoteFleeProgress(ai.transform.position);
 
             __result = true;
             return false;

@@ -204,6 +204,38 @@ namespace CreatureControl
             return true;
         }
 
+        // ---- fire avoidance -------------------------------------------------------
+        // Separate cache from the fear system: no target is needed, and it is
+        // not gated by FearApplies/Fearless - a Deathsquito opts out of the
+        // combat fear check but still needs to dodge a bonfire.
+        float _nextFireEval;
+        bool _avoidingFire;
+        Vector3 _fireFrom;
+
+        public bool AvoidsFire => Rule != null && Rule.AvoidsFire == true;
+
+        /// <summary>
+        /// On a timer, checks for a nearby fire source. Returns the position
+        /// to steer away from, or false if there is nothing close enough to
+        /// react to right now.
+        /// </summary>
+        public bool WantsToAvoidFire(out Vector3 from)
+        {
+            from = Vector3.zero;
+            if (!Plugin.FireAvoidEnabled || !AvoidsFire || Chr == null) return false;
+
+            if (Time.time >= _nextFireEval)
+            {
+                _nextFireEval = Time.time + Plugin.FearInterval;
+                _avoidingFire = FireAversion.NearFire(
+                    Chr.transform.position, Plugin.FireAvoidRadius, out _fireFrom);
+            }
+
+            if (!_avoidingFire) return false;
+            from = _fireFrom;
+            return true;
+        }
+
         // ---- band membership ----------------------------------------------------
         // The verdict is reached once per band per interval and published to
         // every member, so a camp of twelve costs one evaluation.
