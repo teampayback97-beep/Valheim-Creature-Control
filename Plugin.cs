@@ -498,6 +498,11 @@ namespace CreatureControl
             // undone by physics. No-op if BetterTames isn't installed.
             TeleportFix.TryPatch(_harmony);
 
+            // Optional, resolved by name: lets every Rune Magic Runestone draw from
+            // every biome's runes instead of just its own biome and earlier ones.
+            // No-op if Rune Magic isn't installed.
+            RuneMagicAllBiomes.TryPatch(_harmony);
+
             // Registers the "Troll Logging Leash" piece via Jotunn. Deferred to
             // Jotunn's own OnVanillaPrefabsAvailable event internally, so this
             // is safe to call before ZNetScene/ObjectDB exist.
