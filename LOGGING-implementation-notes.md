@@ -1,5 +1,11 @@
 # Troll Logging — implementation notes
 
+**STATUS: WORK IN PROGRESS — not yet build-verified in a real game.** A
+startup log warning in `Plugin.cs` and header notices in `TrollLogging.cs`/
+`TotemBind.cs` point back to this file. Once everything below is resolved and
+the feature has actually been run and tested in-game, remove all three of
+those markers (and this line) to flag it complete.
+
 Everything in the spec artifact is implemented: `CreatureState.cs`, `Plugin.cs`,
 `CreatureRules.cs`, `ConfigLoader.cs`, `Patches.cs` modified; `TrollLogging.cs`
 and `TotemBind.cs` added; `CreatureControl.csproj` given a Jotunn reference.

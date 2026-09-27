@@ -38,6 +38,11 @@ namespace CreatureControl
     }
 
     /// <summary>
+    /// STATUS: WORK IN PROGRESS - not yet build-verified. See
+    /// LOGGING-implementation-notes.md in the repo root before relying on
+    /// this in a real game; remove this notice once that file's open items
+    /// are resolved and it's been run and tested.
+    ///
     /// Drives a logging troll: which tree it works, when it hits it, what it
     /// carries, and when it hands the stack off to a chest. TotemBind.cs owns
     /// WHERE (the leash bind, the radius, the nearest chest); this owns WHAT

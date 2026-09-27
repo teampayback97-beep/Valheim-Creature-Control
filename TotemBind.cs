@@ -4,6 +4,11 @@ using UnityEngine;
 namespace CreatureControl
 {
     /// <summary>
+    /// STATUS: WORK IN PROGRESS - not yet build-verified. See
+    /// LOGGING-implementation-notes.md in the repo root before relying on
+    /// this in a real game; remove this notice once that file's open items
+    /// are resolved and it's been run and tested.
+    ///
     /// The "Troll Logging Leash" piece: registration, world binding, and the
     /// two lookups TrollLogging.cs needs - whether a point is inside a
     /// leash's radius, and where the nearest chest is.

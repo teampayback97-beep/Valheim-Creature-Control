@@ -504,6 +504,16 @@ namespace CreatureControl
 
             StartWatching();
             Log.LogInfo($"{NAME} v{VERSION} ready.");
+
+            // Unconditional - not gated by Verbose - because this is a build-time
+            // status flag, not tuning noise. Remove this call (and update
+            // LOGGING-implementation-notes.md) once the feature has been run in
+            // a real game and the open items in that file are resolved.
+            if (LoggingEnabled)
+                Log.LogWarning(
+                    "[WIP] Troll Logging Leash has not been build-verified yet - see " +
+                    "LOGGING-implementation-notes.md in the repo root for the open punch list " +
+                    "before relying on it.");
         }
 
         void LoadConfigs()
