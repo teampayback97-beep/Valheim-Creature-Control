@@ -239,7 +239,7 @@ namespace CreatureControl
             // still forever. Fall through to vanilla instead.
             if (!Threat.Available) return true;
 
-            var st = CreatureState.For(__instance.gameObject.GetComponent<Character>());
+            var st = CreatureState.For((BaseAI)__instance);
             if (st == null) return true;
 
             // A creature we tried and failed to move is handed back to vanilla
@@ -247,24 +247,52 @@ namespace CreatureControl
             // worse than not having it.
             if (st.FearBroken) return true;
 
-            // Fire avoidance runs first and needs no target: a Deathsquito
-            // is not weighing a fight, it just will not fly through smoke -
-            // same instinct whether or not it has an enemy right now, and
-            // whether or not it is Fearless for the combat check below.
-            if (Plugin.FireAvoidEnabled && st.AvoidsFire &&
-                st.WantsToAvoidFire(out var fireFrom))
-                return DriveAwayFrom(__instance, st, dt, fireFrom, ref __result);
-
+            // Fire is NOT handled here any more. Vanilla runs its own fire
+            // branch inside MonsterAI.UpdateAI, further down this same method,
+            // and Patch_BaseAI_AvoidFire below reshapes that instead - which
+            // gets the target-dropping, the alerting and the orbit pathing for
+            // free rather than reimplementing them in front of it.
             if (!Plugin.FearEnabled || !st.FearApplies) return true;
 
             // No target means nothing to be afraid of, and it also means vanilla
             // needs this tick to go looking for one.
             var target = __instance.GetTargetCreature();
-            if (target == null) { st.ForgetFear(); return true; }
+            if (target == null) { st.ForgetFear(); st.ForgetStalk(); return true; }
 
-            if (!st.WantsToFlee(target, out var from)) return true;
+            if (st.WantsToFlee(target, out var from))
+                return DriveAwayFrom(__instance, st, dt, from, ref __result);
 
-            return DriveAwayFrom(__instance, st, dt, from, ref __result);
+            // Not running. Is it working up to it? A hunter that walks straight
+            // in is not stalking, so for a short window after picking a target
+            // it holds its distance and circles instead of closing. Runs after
+            // the fear check on purpose: something that has decided to leave is
+            // not also circling.
+            if (st.WantsToStalk(target) && AiMotion.CanOrbit)
+                return Circle(__instance, st, dt, target, ref __result);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Holds the creature out at its stalking radius, facing its target.
+        /// Same borrowed vanilla movement the fire circling uses, so the pathing
+        /// is already proven; and it owes the tick the same shared work that
+        /// DriveAwayFrom does.
+        /// </summary>
+        static bool Circle(MonsterAI ai, CreatureState st, float dt, Character target, ref bool __result)
+        {
+            if (!Threat.BaseTick(ai, dt)) { __result = false; return false; }
+            if (ai.IsSleeping()) { __result = true; return false; }
+
+            // Deliberately NOT alerted here. Alerting is what a creature does
+            // when it commits, and the whole point of a stalk is that it has
+            // not yet - it also keeps the alerted roar from giving the game away
+            // before the charge.
+            AiMotion.Orbit(ai, dt, target.transform.position, st.StalkRadius, ai.IsAlerted());
+            ai.LookTowards(target.transform.position);
+
+            __result = true;
+            return false;
         }
 
         /// <summary>
@@ -314,6 +342,154 @@ namespace CreatureControl
 
             __result = true;
             return false;
+        }
+    }
+
+    // ------------------------------------------------------------------- fire
+
+    /// <summary>
+    /// Fire avoidance, one tier at a time.
+    ///
+    /// Vanilla already has all the behaviour we want. BaseAI.AvoidFire either
+    /// flees a flame or circles it, and circles TIGHTER when its target is
+    /// standing in the fire - which is exactly "it keeps hunting you but will
+    /// not come through the flames". MonsterAI then clears the target only on
+    /// the fleeing path, so circling holds its grudge and fleeing forgets you.
+    ///
+    /// The one thing vanilla cannot do is weigh the fire. It asks
+    ///     EffectArea.IsPointInsideArea(position, Type.Fire, 3f)
+    /// - a flat three metres, the same for a hand torch and a bonfire, and the
+    /// same for a neck and a lox. So this replaces the method rather than
+    /// wrapping it: same two behaviours, same return contract, but the radius
+    /// comes from the fire's tier and the creature's own nerve.
+    ///
+    /// Creatures the config says nothing about fall through to the original, so
+    /// vanilla fire handling is untouched for everything we have no opinion on.
+    /// </summary>
+    [HarmonyPatch(typeof(BaseAI), "AvoidFire")]
+    static class Patch_BaseAI_AvoidFire
+    {
+        static bool Prefix(BaseAI __instance, float dt, Character moveToTarget, ref bool __result)
+        {
+            if (!Plugin.FireAvoidEnabled) return true;
+
+            var st = CreatureState.For(__instance);
+            if (st == null || !st.HasFireOpinion) return true;
+
+            // Both behaviours need a borrowed vanilla call. If either failed to
+            // bind, hand the creature back rather than leaving it standing in a
+            // fire with nothing driving it.
+            bool flees = st.FireReact == FireReaction.Flee;
+            if (flees ? !Threat.Available : !AiMotion.CanOrbit) return true;
+
+            if (!st.WantsToAvoidFire(out var firePos, out var reach))
+            {
+                // We own this creature's fire verdict, and the verdict is "no".
+                // Returning false here rather than true deliberately skips
+                // vanilla's own 3 m check, which would otherwise still fire and
+                // undercut a creature configured to tolerate a campfire.
+                __result = false;
+                return false;
+            }
+
+            if (flees)
+            {
+                // Matches vanilla's own afraid-of-fire path: alert first, since
+                // BaseAI.Flee ends with MoveTo(..., run: IsAlerted()) and an
+                // unalerted creature merely ambles away from a fire.
+                __instance.Alert();
+                Threat.Flee(__instance, dt, firePos);
+                __result = true;
+                return false;
+            }
+
+            // Circling. Vanilla decides "tight or wide" by asking whether the
+            // target is literally touching the flame; with tiered radii the
+            // right question is whether the target is inside the ring this
+            // creature refuses to enter.
+            bool targetSheltered =
+                moveToTarget != null &&
+                Vector3.Distance(moveToTarget.transform.position, firePos) <= reach;
+
+            // Tight: hold the edge and wait it out - the target is in there.
+            // Wide: nothing to wait for, so give the flame a clear berth.
+            float orbit = targetSheltered ? reach + 1f : reach * 1.25f;
+
+            AiMotion.Orbit(__instance, dt, firePos, orbit, __instance.IsAlerted());
+            __result = true;
+            return false;
+        }
+    }
+
+    // -------------------------------------------------------------- day / night
+
+    /// <summary>
+    /// Stealth: how far anything else can see or hear this creature.
+    ///
+    /// Patched on the STATIC ten-argument CanSenseTarget rather than the tidy
+    /// instance CanSeeTarget/CanHearTarget, because the instance ones are not in
+    /// the path that matters. The chain is
+    ///     CanSenseTarget(target) -> CanSenseTarget(target, passiveAggresive)
+    ///                            -> CanSenseTarget(me, eye, hearRange, viewRange, ...)
+    /// and target ACQUISITION comes in through FindClosestCreature, which calls
+    /// that same static overload directly. One patch here covers both; patching
+    /// the instance methods would have covered neither.
+    ///
+    /// It takes the two ranges as arguments, which is what makes this clean: we
+    /// shrink the observer's reach for this one question instead of writing to
+    /// the observer's own fields and having to put them back.
+    ///
+    /// Only ever REDUCES. A creature cannot be made easier to notice than the
+    /// observer's own senses already allow.
+    /// </summary>
+    [HarmonyPatch(typeof(BaseAI), nameof(BaseAI.CanSenseTarget),
+        typeof(Transform), typeof(Vector3), typeof(float), typeof(float), typeof(float),
+        typeof(bool), typeof(bool), typeof(Character), typeof(bool), typeof(bool))]
+    static class Patch_BaseAI_CanSenseTarget
+    {
+        static void Prefix(ref float hearRange, ref float viewRange, Character target)
+        {
+            if (!Plugin.PhaseEnabled || target == null) return;
+
+            var st = CreatureState.For(target);
+            if (st == null) return;
+
+            float k = st.Stealth;
+            if (k >= 1f) return;
+
+            hearRange *= k;
+            viewRange *= k;
+        }
+    }
+
+    /// <summary>
+    /// The damage half of a day/night profile.
+    ///
+    /// Character.Damage is the outer entry point every hit arrives through, and
+    /// HitData.m_damage is a DamageTypes with its own Modify(float) - so scaling
+    /// every damage type at once needs no per-type arithmetic here, and a hit
+    /// that deals no damage is left alone entirely.
+    ///
+    /// Reads the ATTACKER's profile, not the victim's: this is "a prowler hits
+    /// harder after dark", not "things take more damage at night".
+    /// </summary>
+    [HarmonyPatch(typeof(Character), nameof(Character.Damage), typeof(HitData))]
+    static class Patch_Character_Damage
+    {
+        static void Prefix(HitData hit)
+        {
+            if (!Plugin.PhaseEnabled || hit == null) return;
+
+            var attacker = hit.GetAttacker();
+            if (attacker == null) return;
+
+            var st = CreatureState.For(attacker);
+            if (st == null) return;
+
+            float k = st.DamageMult;
+            if (k == 1f) return;
+
+            hit.m_damage.Modify(k);
         }
     }
 

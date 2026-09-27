@@ -16,14 +16,26 @@ namespace CreatureControl
         static readonly Dictionary<Character, CreatureState> _registry =
             new Dictionary<Character, CreatureState>();
 
+        /// <summary>Second index, keyed by the AI component. The fire and fear
+        /// patches are handed a BaseAI, and reaching the Character from there
+        /// used to cost a GetComponent on every AI tick.</summary>
+        static readonly Dictionary<BaseAI, CreatureState> _byAi =
+            new Dictionary<BaseAI, CreatureState>();
+
         public static CreatureState For(Character c)
         {
             if (c == null) return null;
             return _registry.TryGetValue(c, out var s) ? s : null;
         }
 
+        public static CreatureState For(BaseAI ai)
+        {
+            if ((object)ai == null) return null;
+            return _byAi.TryGetValue(ai, out var s) ? s : null;
+        }
+
         public static int Tracked => _registry.Count;
-        public static void ClearRegistry() => _registry.Clear();
+        public static void ClearRegistry() { _registry.Clear(); _byAi.Clear(); }
 
         public static IEnumerable<CreatureState> AllTracked => _registry.Values;
 
@@ -205,35 +217,227 @@ namespace CreatureControl
         }
 
         // ---- fire avoidance -------------------------------------------------------
-        // Separate cache from the fear system: no target is needed, and it is
-        // not gated by FearApplies/Fearless - a Deathsquito opts out of the
-        // combat fear check but still needs to dodge a bonfire.
+        // The BEHAVIOUR is vanilla's: BaseAI.AvoidFire already flees or circles,
+        // and MonsterAI already drops the target when it flees. What vanilla
+        // cannot do is tell a torch from a bonfire - it asks for a flat 3 m
+        // margin for every creature and every flame. This half supplies the
+        // verdict vanilla is missing, and Patches feeds it to vanilla's own
+        // movement. Deliberately not gated by FearApplies or Fearless: a
+        // Deathsquito opts out of the combat check and still dodges a bonfire.
         float _nextFireEval;
         bool _avoidingFire;
         Vector3 _fireFrom;
+        float _fireReach;
+        float _fireCommitUntil;
+        bool _fireLogged;
 
-        public bool AvoidsFire => Rule != null && Rule.AvoidsFire == true;
+        // Captured so a deleted config line genuinely puts the creature back.
+        bool _origAvoidFire, _origAfraidOfFire;
+        bool _fireFlagsApplied;
+
+        /// <summary>The weakest fire that turns this creature. None means fire
+        /// is left entirely to the game's own handling.</summary>
+        public FireTier FireFear =>
+            Rule != null && Rule.FireFear.HasValue ? Rule.FireFear.Value : FireTier.None;
+
+        /// <summary>Circle and wait, or drop the target and bolt.</summary>
+        public FireReaction FireReact =>
+            Rule != null && Rule.FireReact.HasValue ? Rule.FireReact.Value : FireReaction.Circle;
+
+        public float FireBuffer =>
+            Rule != null && Rule.FireBuffer.HasValue && Rule.FireBuffer.Value > 0f
+                ? Rule.FireBuffer.Value : 1f;
+
+        /// <summary>True when the config has an opinion about fire for this
+        /// creature, which is also what decides whether we touch vanilla's two
+        /// fire flags at all.</summary>
+        public bool HasFireOpinion => FireFear != FireTier.None;
 
         /// <summary>
-        /// On a timer, checks for a nearby fire source. Returns the position
-        /// to steer away from, or false if there is nothing close enough to
-        /// react to right now.
+        /// On a timer, the fire this creature should be reacting to.
+        ///
+        /// Holds its verdict for a few seconds once it has one. Vanilla does the
+        /// same thing with a 6 s memory on m_nearFireTime, and for the same
+        /// reason: a creature that re-decides every tick at the exact edge of
+        /// the radius twitches in and out of avoiding instead of avoiding.
         /// </summary>
-        public bool WantsToAvoidFire(out Vector3 from)
+        public bool WantsToAvoidFire(out Vector3 from, out float reach)
         {
-            from = Vector3.zero;
-            if (!Plugin.FireAvoidEnabled || !AvoidsFire || Chr == null) return false;
+            from = _fireFrom;
+            reach = _fireReach;
+            if (!Plugin.FireAvoidEnabled || !HasFireOpinion || Chr == null) return false;
+
+            // Tamed creatures follow you past your own hearth. Vanilla's
+            // AvoidFire opens with the same check.
+            if (Chr.IsTamed()) return false;
 
             if (Time.time >= _nextFireEval)
             {
-                _nextFireEval = Time.time + Plugin.FearInterval;
-                _avoidingFire = FireAversion.NearFire(
-                    Chr.transform.position, Plugin.FireAvoidRadius, out _fireFrom);
+                _nextFireEval = Time.time + Plugin.FireInterval;
+
+                bool now = FireAversion.NearFire(
+                    Chr.transform.position, FireFear, FireBuffer,
+                    out var pos, out var r);
+
+                if (now)
+                {
+                    _fireFrom = pos;
+                    _fireReach = r;
+                    _fireCommitUntil = Time.time + Plugin.FireCommitSeconds;
+                    if (!_avoidingFire && Plugin.Verbose && !_fireLogged)
+                    {
+                        _fireLogged = true;
+                        Plugin.Log.LogInfo(
+                            $"[fire] {Prefab} backing off a {FireFear}+ fire at {r:0.#} m ({FireReact}).");
+                    }
+                    _avoidingFire = true;
+                }
+                else if (Time.time >= _fireCommitUntil)
+                {
+                    if (_avoidingFire && Plugin.Verbose)
+                        Plugin.Log.LogInfo($"[fire] {Prefab} is clear of the fire.");
+                    _avoidingFire = false;
+                    _fireLogged = false;
+                }
             }
 
             if (!_avoidingFire) return false;
             from = _fireFrom;
+            reach = _fireReach;
             return true;
+        }
+
+        // ---- day / night --------------------------------------------------------
+        // The numbers themselves live in PhaseStats; this is the part that says
+        // which set is in force and hands them out. Phase.Tick pushes a re-apply
+        // when the sun moves, so nothing here polls the clock.
+        DayPhase _appliedPhase;
+        bool _phaseApplied;
+
+        // Captured so removing a speed line genuinely restores the creature.
+        float _origSpeed, _origWalkSpeed, _origRunSpeed, _origAcceleration;
+        bool _speedApplied;
+
+        /// <summary>True when the config gives this creature anything at all to
+        /// do with the time of day. Used to keep the phase-flip sweep off the
+        /// creatures it has nothing to say to.</summary>
+        public bool HasPhaseProfile =>
+            Plugin.PhaseEnabled && Rule != null &&
+            ((Rule.Day != null && !Rule.Day.IsEmpty) || (Rule.Night != null && !Rule.Night.IsEmpty));
+
+        /// <summary>
+        /// The numbers in force right now, or null for "leave everything alone".
+        ///
+        /// A tamed creature can opt out entirely: a pet that goes half-blind at
+        /// dawn is a broken pet, not a nocturnal one. It keeps the ordinary
+        /// values round the clock rather than getting the night ones pinned on,
+        /// because pinning the good half on is still a creature whose senses
+        /// stop matching the config you can see.
+        /// </summary>
+        public PhaseStats ActivePhase
+        {
+            get
+            {
+                if (!HasPhaseProfile) return null;
+                if (Rule.PhaseExemptTamed == true && Chr != null && Chr.IsTamed()) return null;
+                return Phase.IsNight ? Rule.Night : Rule.Day;
+            }
+        }
+
+        /// <summary>What this creature is worth in a fight, the time of day
+        /// included. The fear model reads this rather than Rule.Threat, so a
+        /// creature that is genuinely more dangerous after dark is also treated
+        /// as more dangerous by everything deciding whether to fight it.</summary>
+        public float ThreatValue
+        {
+            get
+            {
+                var ph = ActivePhase;
+                if (ph != null && ph.Threat.HasValue) return ph.Threat.Value;
+                if (Rule != null && Rule.Threat.HasValue) return Rule.Threat.Value;
+                return Plugin.DefaultThreat;
+            }
+        }
+
+        /// <summary>How far anything else can see or hear this creature, as a
+        /// fraction of its own senses. 1 = ordinary.</summary>
+        public float Stealth
+        {
+            get
+            {
+                var ph = ActivePhase;
+                if (ph != null && ph.Stealth.HasValue && ph.Stealth.Value > 0f)
+                    return Mathf.Min(1f, ph.Stealth.Value);
+                return 1f;
+            }
+        }
+
+        /// <summary>Multiplier on the damage this creature DEALS right now.</summary>
+        public float DamageMult
+        {
+            get
+            {
+                var ph = ActivePhase;
+                if (ph != null && ph.DamageMult.HasValue && ph.DamageMult.Value > 0f)
+                    return ph.DamageMult.Value;
+                return 1f;
+            }
+        }
+
+        // ---- stalking -----------------------------------------------------------
+        // A hunter that walks straight at you is not stalking. This holds it at
+        // a distance for a few seconds after it picks you out, circling, before
+        // it commits - and once it has committed to a target it stays committed,
+        // so there is no circling back and forth mid-fight.
+        Character _stalkTarget;
+        float _stalkUntil;
+        bool _stalkSpent;
+
+        public float StalkSeconds =>
+            Rule != null && Rule.StalkSeconds.HasValue ? Rule.StalkSeconds.Value : 0f;
+        public float StalkRadius =>
+            Rule != null && Rule.StalkRadius.HasValue ? Rule.StalkRadius.Value : 8f;
+        public float PounceRange =>
+            Rule != null && Rule.PounceRange.HasValue ? Rule.PounceRange.Value : 4f;
+
+        /// <summary>
+        /// Whether this creature should be circling its target instead of
+        /// closing on it. Only ever true for a short window per target, and
+        /// never once it has closed inside its pounce range - so the worst case
+        /// is a few seconds of menace, never a creature that refuses to fight.
+        /// </summary>
+        public bool WantsToStalk(Character target)
+        {
+            if (!Plugin.StalkEnabled || StalkSeconds <= 0f || target == null || Chr == null)
+                return false;
+
+            // Pets do not stalk their owner's enemies; they are told to go.
+            if (Chr.IsTamed()) return false;
+
+            if (target != _stalkTarget)
+            {
+                _stalkTarget = target;
+                _stalkUntil = Time.time + StalkSeconds;
+                _stalkSpent = false;
+            }
+
+            if (_stalkSpent) return false;
+
+            if (Time.time >= _stalkUntil)
+            { _stalkSpent = true; return false; }
+
+            // Close enough to strike: stop play-acting and commit for good.
+            float gap = Vector3.Distance(Chr.transform.position, target.transform.position);
+            if (gap <= PounceRange)
+            { _stalkSpent = true; return false; }
+
+            return true;
+        }
+
+        public void ForgetStalk()
+        {
+            _stalkTarget = null;
+            _stalkSpent = false;
         }
 
         // ---- band membership ----------------------------------------------------
@@ -441,16 +645,20 @@ namespace CreatureControl
         // then it reads as null and the entry would leak for the whole session.
         // Keep the reference and compare as a plain object instead.
         Character _key;
+        BaseAI _aiKey;
 
         public void Register()
         {
             _key = Chr;
             if ((object)_key != null) _registry[_key] = this;
+            _aiKey = Ai;
+            if ((object)_aiKey != null) _byAi[_aiKey] = this;
         }
 
         void OnDestroy()
         {
             if ((object)_key != null) _registry.Remove(_key);
+            if ((object)_aiKey != null) _byAi.Remove(_aiKey);
         }
 
         /// <summary>
@@ -528,10 +736,16 @@ namespace CreatureControl
             _origView = Ai.m_viewRange;
             _origHear = Ai.m_hearRange;
             _origCanBeAlerted = Ai.m_canBeAlerted;
+            _origAvoidFire = Ai.m_avoidFire;
+            _origAfraidOfFire = Ai.m_afraidOfFire;
             if (Chr != null)
             {
                 _origFaction = Chr.m_faction;
                 _origRegenAllHPTime = Chr.m_regenAllHPTime;
+                _origSpeed = Chr.m_speed;
+                _origWalkSpeed = Chr.m_walkSpeed;
+                _origRunSpeed = Chr.m_runSpeed;
+                _origAcceleration = Chr.m_acceleration;
             }
             if (Mai != null)
             {
@@ -551,6 +765,13 @@ namespace CreatureControl
             Ai.m_viewRange = _origView;
             Ai.m_hearRange = _origHear;
             Ai.m_canBeAlerted = _origCanBeAlerted;
+            // Only undo the fire flags if we were the ones who set them.
+            if (_fireFlagsApplied)
+            {
+                Ai.m_avoidFire = _origAvoidFire;
+                Ai.m_afraidOfFire = _origAfraidOfFire;
+                _fireFlagsApplied = false;
+            }
             if (Mai != null)
             {
                 Mai.m_attackPlayerObjects = _origAttackPlayerObjects;
@@ -570,6 +791,15 @@ namespace CreatureControl
             {
                 Chr.m_faction = _origFaction;
                 _factionApplied = false;
+            }
+            // Only undo the speed scaling if we were the ones who set it.
+            if (_speedApplied && Chr != null)
+            {
+                Chr.m_speed = _origSpeed;
+                Chr.m_walkSpeed = _origWalkSpeed;
+                Chr.m_runSpeed = _origRunSpeed;
+                Chr.m_acceleration = _origAcceleration;
+                _speedApplied = false;
             }
             // Only undo the regen scaling if we were the ones who set it.
             if (_regenApplied && Chr != null)
@@ -609,6 +839,19 @@ namespace CreatureControl
             var h = tamed ? (Rule.TamedHear ?? Rule.WildHear) : Rule.WildHear;
             if (v.HasValue) view = v.Value;
             if (h.HasValue) hear = h.Value;
+
+            // The time of day has the last word on the senses, so a nocturnal
+            // hunter can be near-blind by day without losing the plain
+            // viewRange line as its baseline.
+            var ph = ActivePhase;
+            if (ph != null)
+            {
+                if (ph.ViewRange.HasValue) view = ph.ViewRange.Value;
+                if (ph.HearRange.HasValue) hear = ph.HearRange.Value;
+            }
+            _appliedPhase = Phase.Current;
+            _phaseApplied = ph != null;
+
             Ai.m_viewRange = view;
             Ai.m_hearRange = hear;
 
@@ -621,7 +864,10 @@ namespace CreatureControl
                     _mode == BehaviorMode.Aggressive && _origAttackPlayerObjects;
 
                 Mai.m_alertRange = Rule.AlertRange ?? _origAlertRange;
-                Mai.m_maxChaseDistance = Rule.MaxChaseDistance ?? _origMaxChase;
+                Mai.m_maxChaseDistance =
+                    (ph != null && ph.MaxChaseDistance.HasValue)
+                        ? ph.MaxChaseDistance.Value
+                        : (Rule.MaxChaseDistance ?? _origMaxChase);
                 Mai.m_fleeIfLowHealth = Rule.FleeIfLowHealth ?? _origFleeLowHealth;
                 Mai.m_fleeIfNotAlerted = Rule.FleeIfNotAlerted ?? _origFleeIfNotAlerted;
 
@@ -662,6 +908,28 @@ namespace CreatureControl
 
             Ai.m_canBeAlerted = alertable;
 
+            // Vanilla only CALLS AvoidFire when one of these two flags is set:
+            //     if (m_afraidOfFire || m_avoidFire) { if (AvoidFire(...)) ... }
+            // so a creature we want fire-aware has to have one of them on, or
+            // our tier verdict is never consulted at all. Which one matters:
+            // MonsterAI clears the target after AvoidFire ONLY when
+            // m_afraidOfFire is set, and that is the whole difference between a
+            // wolf that waits at the edge of your firelight and one that
+            // forgets you existed.
+            if (Plugin.FireAvoidEnabled && HasFireOpinion)
+            {
+                bool flees = FireReact == FireReaction.Flee;
+                Ai.m_afraidOfFire = flees;
+                Ai.m_avoidFire = !flees;
+                _fireFlagsApplied = true;
+            }
+            else if (_fireFlagsApplied)
+            {
+                Ai.m_avoidFire = _origAvoidFire;
+                Ai.m_afraidOfFire = _origAfraidOfFire;
+                _fireFlagsApplied = false;
+            }
+
             // BaseAI.UpdateRegeneration heals maxHealth / m_regenAllHPTime worth
             // of HP per second - that field is "seconds for a full heal", so a
             // HIGHER multiplier needs a LOWER value here.
@@ -676,6 +944,32 @@ namespace CreatureControl
             // A prefab shipping 0 is left alone deliberately: vanilla divides by
             // this, so 0 there means "heal instantly", not "never heal", and
             // scaling it would be meaningless anyway.
+            // Movement speed, by phase. Written ONLY while we want it scaled, for
+            // the same reason the regen block below is: silently owning a field
+            // we have no opinion about would stomp anything else that sets it.
+            if (Chr != null)
+            {
+                float sm = (ph != null && ph.SpeedMult.HasValue && ph.SpeedMult.Value > 0f)
+                    ? ph.SpeedMult.Value : 1f;
+
+                if (sm != 1f)
+                {
+                    Chr.m_speed = _origSpeed * sm;
+                    Chr.m_walkSpeed = _origWalkSpeed * sm;
+                    Chr.m_runSpeed = _origRunSpeed * sm;
+                    Chr.m_acceleration = _origAcceleration * sm;
+                    _speedApplied = true;
+                }
+                else if (_speedApplied)
+                {
+                    Chr.m_speed = _origSpeed;
+                    Chr.m_walkSpeed = _origWalkSpeed;
+                    Chr.m_runSpeed = _origRunSpeed;
+                    Chr.m_acceleration = _origAcceleration;
+                    _speedApplied = false;
+                }
+            }
+
             if (Chr != null)
             {
                 float mult = Plugin.TamedRegenMultiplier;

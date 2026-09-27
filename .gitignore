@@ -1,0 +1,7 @@
+# build output (the DLL ships through GitHub Releases, not the repo)
+bin/
+obj/
+*.user
+.vs/
+.vscode/
+*.log

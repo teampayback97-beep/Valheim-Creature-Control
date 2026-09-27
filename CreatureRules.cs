@@ -53,12 +53,53 @@ namespace CreatureControl
         /// grown drake, not a baby.</summary>
         public bool? Baby;
 
-        /// <summary>Instinctive smoke/fire avoidance, independent of the fear
-        /// system: steers away from any nearby player fire source whether or
-        /// not it has a target, and whether or not it is otherwise fearless.
-        /// Real mosquitoes avoid smoke - a Deathsquito is not weighing a
-        /// fight, it just will not fly through fire.</summary>
-        public bool? AvoidsFire;
+        // --- fire ---------------------------------------------------------------
+        // Instinctive, independent of the fear system: nothing here is weighing
+        // a fight. A Deathsquito does not decide a bonfire is too strong, it
+        // just will not fly through smoke. So it needs no target and applies
+        // even to a creature the config marks Fearless.
+
+        /// <summary>The WEAKEST fire that deters this creature. Torch means even
+        /// a hand torch turns it; Bonfire means only a bonfire will. None - the
+        /// default - means fire is left entirely to the game's own handling.</summary>
+        public FireTier? FireFear;
+
+        /// <summary>What it does about it. Circle holds its target and waits at
+        /// the edge, which is what makes a wolf sit outside your campfire light
+        /// instead of losing interest. Flee drops the target and bolts.</summary>
+        public FireReaction? FireReact;
+
+        /// <summary>Multiplier on the tier's standoff distance, for creatures
+        /// that want a wider berth than the tier alone gives. 1 = the tier's
+        /// own reach.</summary>
+        public float? FireBuffer;
+
+        // --- day / night ---------------------------------------------------------
+        // One table per half of the day. Symmetric on purpose: a nocturnal
+        // hunter is weak in Day and strong in Night, a diurnal one is the same
+        // values swapped, and neither needs new code. See Phase.cs.
+
+        /// <summary>Numbers that apply while it is day. Null = no opinion.</summary>
+        public PhaseStats Day;
+        /// <summary>Numbers that apply while it is night. Null = no opinion.</summary>
+        public PhaseStats Night;
+
+        /// <summary>A tamed creature keeps its ordinary numbers round the clock.
+        /// A pet that goes half-blind every morning is a broken pet, not a
+        /// nocturnal one.</summary>
+        public bool? PhaseExemptTamed;
+
+        // --- stalking ------------------------------------------------------------
+
+        /// <summary>How long it circles a fresh target before committing to the
+        /// charge. 0 - the default - means it closes straight in, as anything
+        /// does now.</summary>
+        public float? StalkSeconds;
+        /// <summary>How far out it circles while stalking.</summary>
+        public float? StalkRadius;
+        /// <summary>Inside this it stops stalking and commits, however much
+        /// stalking time is left.</summary>
+        public float? PounceRange;
 
         public bool? StanceCycling;
 
@@ -82,7 +123,27 @@ namespace CreatureControl
             if (!Threat.HasValue) Threat = lower.Threat;
             if (!Fearless.HasValue) Fearless = lower.Fearless;
             if (!Baby.HasValue) Baby = lower.Baby;
-            if (!AvoidsFire.HasValue) AvoidsFire = lower.AvoidsFire;
+            if (!StalkSeconds.HasValue) StalkSeconds = lower.StalkSeconds;
+            if (!StalkRadius.HasValue) StalkRadius = lower.StalkRadius;
+            if (!PounceRange.HasValue) PounceRange = lower.PounceRange;
+            if (!PhaseExemptTamed.HasValue) PhaseExemptTamed = lower.PhaseExemptTamed;
+
+            // Merged field by field, not wholesale: a creature may name one
+            // night stat and inherit the rest of the profile from its faction.
+            if (lower.Day != null)
+            {
+                if (Day == null) Day = new PhaseStats();
+                Day.FillFrom(lower.Day);
+            }
+            if (lower.Night != null)
+            {
+                if (Night == null) Night = new PhaseStats();
+                Night.FillFrom(lower.Night);
+            }
+
+            if (!FireFear.HasValue) FireFear = lower.FireFear;
+            if (!FireReact.HasValue) FireReact = lower.FireReact;
+            if (!FireBuffer.HasValue) FireBuffer = lower.FireBuffer;
             if (!RallyRadius.HasValue) RallyRadius = lower.RallyRadius;
             if (!Solitary.HasValue) Solitary = lower.Solitary;
             if (!Sight.HasValue) Sight = lower.Sight;
@@ -101,7 +162,11 @@ namespace CreatureControl
             !FleeIfNotAlerted.HasValue &&
             !Threat.HasValue && !Fearless.HasValue && !Baby.HasValue &&
             !RallyRadius.HasValue && !Solitary.HasValue && !Sight.HasValue && !AlwaysFlee.HasValue &&
-            !StanceCycling.HasValue && !FactionId.HasValue && !AvoidsFire.HasValue;
+            !StanceCycling.HasValue && !FactionId.HasValue &&
+            !FireFear.HasValue && !FireReact.HasValue && !FireBuffer.HasValue &&
+            !StalkSeconds.HasValue && !StalkRadius.HasValue && !PounceRange.HasValue &&
+            !PhaseExemptTamed.HasValue &&
+            (Day == null || Day.IsEmpty) && (Night == null || Night.IsEmpty);
     }
 
     /// <summary>

@@ -60,8 +60,15 @@ namespace CreatureControl
         static ConfigEntry<float> _tamedRegen;
         static ConfigEntry<bool> _tameStructures;
 
+        static ConfigEntry<bool> _phaseOn;
+        static ConfigEntry<bool> _stalkOn;
+
         static ConfigEntry<bool> _fireAvoidOn;
-        static ConfigEntry<float> _fireAvoidRadius;
+        static ConfigEntry<float> _fireTorch, _fireCampfire, _fireBonfire;
+        static ConfigEntry<float> _fireMaxRadius;
+        static ConfigEntry<float> _fireInterval, _fireCommit, _fireScan;
+        static ConfigEntry<FireTier> _fireUnknown;
+        static ConfigEntry<float> _fireGuessTorch, _fireGuessCampfire;
 
         public static bool Verbose => _verbose != null && _verbose.Value;
         public static bool AllowStanceCycling => _cycling == null || _cycling.Value;
@@ -78,7 +85,18 @@ namespace CreatureControl
         /// avoidsFire = true in their rule (Deathsquito by default), and
         /// applies even to creatures the fear system treats as fearless.</summary>
         public static bool FireAvoidEnabled => _fireAvoidOn == null || _fireAvoidOn.Value;
-        public static float FireAvoidRadius => _fireAvoidRadius == null ? 6f : _fireAvoidRadius.Value;
+        public static bool PhaseEnabled => _phaseOn == null || _phaseOn.Value;
+        public static bool StalkEnabled => _stalkOn == null || _stalkOn.Value;
+        public static float FireRadiusTorch => _fireTorch == null ? 5f : _fireTorch.Value;
+        public static float FireRadiusCampfire => _fireCampfire == null ? 9f : _fireCampfire.Value;
+        public static float FireRadiusBonfire => _fireBonfire == null ? 15f : _fireBonfire.Value;
+        public static float FireMaxRadius => _fireMaxRadius == null ? 40f : _fireMaxRadius.Value;
+        public static float FireInterval => _fireInterval == null ? 1f : _fireInterval.Value;
+        public static float FireCommitSeconds => _fireCommit == null ? 5f : _fireCommit.Value;
+        public static float FireScanInterval => _fireScan == null ? 0.5f : _fireScan.Value;
+        public static FireTier FireUnknownTier => _fireUnknown == null ? FireTier.Campfire : _fireUnknown.Value;
+        public static float FireRadiusGuessTorch => _fireGuessTorch == null ? 1.5f : _fireGuessTorch.Value;
+        public static float FireRadiusGuessCampfire => _fireGuessCampfire == null ? 3.5f : _fireGuessCampfire.Value;
         public static float StarThreatScale => _starScale == null ? 0.6f : _starScale.Value;
         public static float PetThreatWeight => _petWeight == null ? 0.5f : _petWeight.Value;
         public static float PlayerThreatScale => _playerScale == null ? 1f : _playerScale.Value;
@@ -289,14 +307,69 @@ namespace CreatureControl
                     "so an unbroken line of creatures cannot chain across the map.",
                     new AcceptableValueRange<float>(10f, 200f)));
 
-            _fireAvoidOn = Config.Bind("Fear", "Enable Fire Avoidance", true,
-                "Creatures flagged avoidsFire (Deathsquito by default) steer away from campfires, " +
-                "bonfires and other player fire sources - real mosquitoes avoid smoke, this is the " +
-                "same instinct, not the danger-score fear check. Applies even to fearless creatures.");
-            _fireAvoidRadius = Config.Bind("Fear", "Fire Avoidance Radius", 6f,
+            _phaseOn = Config.Bind("DayNight", "Enable Day/Night Profiles", true,
+                "Creatures with a [day] or [night] block in the creature config swap their senses, " +
+                "threat, reach, speed, damage and how easily they are noticed as the sun moves. " +
+                "Off leaves every creature on its round-the-clock numbers.");
+            _stalkOn = Config.Bind("DayNight", "Enable Stalking", true,
+                "Creatures given stalkSeconds circle a fresh target before charging it, rather than " +
+                "walking straight in. Off makes every creature close immediately, as they do now.");
+
+            _fireAvoidOn = Config.Bind("Fire", "Enable Fire Avoidance", true,
+                "Creatures given an avoidsFire tier keep their distance from flames. Instinct, not " +
+                "the danger-score fear check: it needs no target and applies even to fearless " +
+                "creatures. Tamed creatures always ignore fire, as they do in vanilla.");
+
+            _fireTorch = Config.Bind("Fire", "Reach - Torch", 5f,
                 new ConfigDescription(
-                    "How close a fire-avoiding creature lets a flame get before it steers off.",
-                    new AcceptableValueRange<float>(2f, 20f)));
+                    "How far a torch holds off a creature that fears torches.",
+                    new AcceptableValueRange<float>(1f, 40f)));
+            _fireCampfire = Config.Bind("Fire", "Reach - Campfire", 9f,
+                new ConfigDescription(
+                    "How far a campfire, hearth or forge holds off a creature that fears them.",
+                    new AcceptableValueRange<float>(1f, 60f)));
+            _fireBonfire = Config.Bind("Fire", "Reach - Bonfire", 15f,
+                new ConfigDescription(
+                    "How far a bonfire holds off a creature. This is the one that turns a lox.",
+                    new AcceptableValueRange<float>(1f, 80f)));
+            _fireMaxRadius = Config.Bind("Fire", "Reach Cap", 40f,
+                new ConfigDescription(
+                    "Hard ceiling after a creature's own fireBuffer multiplier is applied, so a " +
+                    "twitchy creature at a big bonfire cannot end up with a no-go zone the size " +
+                    "of a village. 0 removes the cap.",
+                    new AcceptableValueRange<float>(0f, 200f)));
+
+            _fireInterval = Config.Bind("Fire", "Re-check Seconds", 1f,
+                new ConfigDescription(
+                    "How often one creature reconsiders the fire near it.",
+                    new AcceptableValueRange<float>(0.1f, 5f)));
+            _fireCommit = Config.Bind("Fire", "Commitment Seconds", 5f,
+                new ConfigDescription(
+                    "Once it has decided to keep away it holds that for this long. Stops a " +
+                    "creature sitting exactly on the edge of the radius twitching in and out. " +
+                    "Vanilla does the same thing with a 6 second memory.",
+                    new AcceptableValueRange<float>(0f, 20f)));
+            _fireScan = Config.Bind("Fire", "Scan Seconds", 0.5f,
+                new ConfigDescription(
+                    "How often the list of burning things in the world is refreshed. This is ONE " +
+                    "scan shared by every creature, not one each; positions are read live, so a " +
+                    "carried torch is never stale regardless of this value.",
+                    new AcceptableValueRange<float>(0.1f, 5f)));
+
+            _fireUnknown = Config.Bind("Fire", "Unlisted Source Tier", FireTier.Campfire,
+                "What to treat a burning thing as when it is not named under [FireSources] and " +
+                "its flame is too small to guess from. Turn on verbose logging to have anything " +
+                "unlisted reported once, with the name to paste into the config.");
+            _fireGuessTorch = Config.Bind("Fire", "Guess - Torch Below", 1.5f,
+                new ConfigDescription(
+                    "An unlisted flame smaller than this reads as a torch. Only ever used for " +
+                    "sources missing from [FireSources]; a name there always wins.",
+                    new AcceptableValueRange<float>(0.1f, 10f)));
+            _fireGuessCampfire = Config.Bind("Fire", "Guess - Campfire Below", 3.5f,
+                new ConfigDescription(
+                    "An unlisted flame smaller than this reads as a campfire; bigger reads as a " +
+                    "bonfire.",
+                    new AcceptableValueRange<float>(0.1f, 20f)));
 
             _catalog = Config.Bind("Diagnostics", "Write Creature Catalog", true,
                 "Once per world load, write every registered creature prefab and the live spawn " +
@@ -388,6 +461,10 @@ namespace CreatureControl
         {
             HandleReload();
             HandleStanceKey();
+
+            // One clock read for the whole mod. Only does real work on the two
+            // ticks a day when it actually turns over.
+            if (PhaseEnabled) Phase.Tick();
 
             // Cheap: returns immediately once written, and before that it only
             // tests whether ZNetScene has finished registering prefabs.
@@ -539,14 +616,6 @@ namespace CreatureControl
                     "so an unbroken line of creatures cannot chain across the map.",
                     new AcceptableValueRange<float>(10f, 200f)));
 
-            _fireAvoidOn = Config.Bind("Fear", "Enable Fire Avoidance", true,
-                "Creatures flagged avoidsFire (Deathsquito by default) steer away from campfires, " +
-                "bonfires and other player fire sources - real mosquitoes avoid smoke, this is the " +
-                "same instinct, not the danger-score fear check. Applies even to fearless creatures.");
-            _fireAvoidRadius = Config.Bind("Fear", "Fire Avoidance Radius", 6f,
-                new ConfigDescription(
-                    "How close a fire-avoiding creature lets a flame get before it steers off.",
-                    new AcceptableValueRange<float>(2f, 20f)));
 
             LoadConfigs();
             ReapplyToLoadedCreatures();
@@ -632,6 +701,8 @@ namespace CreatureControl
             try { if (_watcher != null) _watcher.Dispose(); } catch { }
             try { if (_harmony != null) _harmony.UnpatchSelf(); } catch { }
             CreatureState.ClearRegistry();
+            FireAversion.Reset();
+            Phase.Forget();
         }
     }
 }

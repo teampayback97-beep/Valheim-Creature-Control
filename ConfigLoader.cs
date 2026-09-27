@@ -63,22 +63,90 @@ namespace CreatureControl
             return result;
         }
 
+        /// <summary>
+        /// One stat inside a day.* or night.* block. Every value is a plain
+        /// number; ranges are absolute metres, so they read the same as the
+        /// phase-neutral viewRange / hearRange / threat lines, and the rest are
+        /// multipliers on whatever the creature already had.
+        /// </summary>
+        static bool ApplyPhaseKey(PhaseStats ps, string key, string value, out string err)
+        {
+            err = null;
+            if (!F(value, out float f))
+            { err = $"'{value}' is not a number"; return false; }
+
+            switch (key)
+            {
+                case "viewrange":
+                    if (f < 0f) { err = "viewRange cannot be negative"; return false; }
+                    ps.ViewRange = f; return true;
+
+                case "hearrange":
+                    if (f < 0f) { err = "hearRange cannot be negative"; return false; }
+                    ps.HearRange = f; return true;
+
+                case "threat":
+                    if (f < 0f) { err = "threat cannot be negative"; return false; }
+                    ps.Threat = f; return true;
+
+                case "maxchasedistance":
+                    if (f < 0f) { err = "maxChaseDistance cannot be negative"; return false; }
+                    ps.MaxChaseDistance = f; return true;
+
+                case "damage":
+                case "damagemult":
+                    if (f <= 0f) { err = "damage is a multiplier and must be above 0"; return false; }
+                    ps.DamageMult = f; return true;
+
+                case "speed":
+                case "speedmult":
+                    if (f <= 0f) { err = "speed is a multiplier and must be above 0"; return false; }
+                    ps.SpeedMult = f; return true;
+
+                case "stealth":
+                    if (f <= 0f || f > 1f)
+                    { err = $"stealth is a fraction of normal detection range (0-1); got {f}"; return false; }
+                    ps.Stealth = f; return true;
+
+                default:
+                    err = $"unknown day/night stat '{key}' - expected viewRange, hearRange, " +
+                          "threat, maxChaseDistance, damage, speed or stealth";
+                    return false;
+            }
+        }
+
+        /// <summary>A fire tier, or the older true/false spelling. true means
+        /// "deterred by anything at all", which is the Torch tier.</summary>
+        static bool TryFireTier(string v, out FireTier t)
+        {
+            switch ((v ?? "").Trim().ToLowerInvariant())
+            {
+                case "torch": case "true": t = FireTier.Torch; return true;
+                case "campfire": case "fire": t = FireTier.Campfire; return true;
+                case "bonfire": t = FireTier.Bonfire; return true;
+                case "none": case "false": t = FireTier.None; return true;
+            }
+            t = FireTier.None; return false;
+        }
+
         static bool F(string v, out float f) =>
             float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out f);
 
         public static void LoadAll(string dir)
         {
             var factions = BuildFactions(dir);
-            var creatures = BuildCreatures(dir, factions);
+            var creatures = BuildCreatures(dir, factions, out var fires);
 
             FactionRegistry.Install(factions);
             CreatureRules.Install(creatures);
+            FireSources.Install(fires);
 
             Plugin.Log.LogInfo(
                 $"Loaded {creatures.ByPrefab.Count} creature rule(s), " +
                 $"{creatures.ByFaction.Count} faction rule(s)" +
                 (creatures.Fallback != null ? ", + a [*] fallback" : "") +
-                (factions.HasCustom ? $", {factions.Untargetable.Count} untargetable faction(s)" : ""));
+                (factions.HasCustom ? $", {factions.Untargetable.Count} untargetable faction(s)" : "") +
+                (fires.Count > 0 ? $", {fires.Count} fire source(s)" : ""));
         }
 
         // ---------------------------------------------------------------- factions
@@ -154,15 +222,29 @@ namespace CreatureControl
 
         // --------------------------------------------------------------- creatures
 
-        static CreatureRules.Store BuildCreatures(string dir, FactionRegistry.Store factions)
+        static CreatureRules.Store BuildCreatures(string dir, FactionRegistry.Store factions,
+                                                  out FireSources.Store fires)
         {
             var store = new CreatureRules.Store();
+            fires = new FireSources.Store();
             var path = Path.Combine(dir, CreaturesFile);
             if (!File.Exists(path)) WriteDefaultCreatures(path);
 
             foreach (var l in Parse(path))
             {
                 if (l.Section == null) continue;
+
+                // [FireSources] is a lookup table, not a creature. It says which
+                // world objects count as which strength of fire, so the tier
+                // model is not a hard-coded prefab list that a mod pack breaks.
+                if (string.Equals(l.Section, "FireSources", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (TryFireTier(l.Value, out var ft) && ft != FireTier.None)
+                        fires.ByName[l.Key] = ft;
+                    else
+                        Warn(l, $"expected torch/campfire/bonfire, got '{l.Value}'");
+                    continue;
+                }
 
                 CreatureRule rule;
                 if (l.Section == "*")
@@ -179,7 +261,25 @@ namespace CreatureControl
                 }
                 else rule = store.GetOrCreatePrefab(l.Section);
 
-                switch (l.Key.ToLowerInvariant())
+                var lowKey = l.Key.ToLowerInvariant();
+
+                // day.* and night.* are one table each, parsed generically. This
+                // is the seam that keeps the profile system open: a new stat is
+                // a field on PhaseStats plus a case in ApplyPhaseKey, and no
+                // other part of the config path has to learn about it.
+                if (lowKey.StartsWith("day.", StringComparison.Ordinal) ||
+                    lowKey.StartsWith("night.", StringComparison.Ordinal))
+                {
+                    bool night = lowKey[0] == 'n';
+                    var sub = lowKey.Substring(night ? 6 : 4);
+                    var ps = night
+                        ? (rule.Night ?? (rule.Night = new PhaseStats()))
+                        : (rule.Day ?? (rule.Day = new PhaseStats()));
+                    if (!ApplyPhaseKey(ps, sub, l.Value, out var perr)) Warn(l, perr);
+                    continue;
+                }
+
+                switch (lowKey)
                 {
                     case "behavior":
                     case "behaviour":
@@ -291,9 +391,67 @@ namespace CreatureControl
                         else Warn(l, $"expected true/false, got '{l.Value}'");
                         break;
 
+                    // One key, two spellings of the same idea: a tier names the
+                    // weakest fire that turns this creature, and the old
+                    // true/false still works - true meaning "even a torch".
                     case "avoidsfire":
-                        if (bool.TryParse(l.Value, out var avf)) rule.AvoidsFire = avf;
+                    case "fearsfire":
+                        if (TryFireTier(l.Value, out var aft)) rule.FireFear = aft;
+                        else Warn(l, $"expected torch/campfire/bonfire/false, got '{l.Value}'");
+                        break;
+
+                    case "firereaction":
+                        switch (l.Value.Trim().ToLowerInvariant())
+                        {
+                            case "circle": case "wait": case "avoid":
+                                rule.FireReact = FireReaction.Circle; break;
+                            case "flee": case "bolt": case "run":
+                                rule.FireReact = FireReaction.Flee; break;
+                            default:
+                                Warn(l, $"expected circle/flee, got '{l.Value}'");
+                                break;
+                        }
+                        break;
+
+                    case "firebuffer":
+                        if (F(l.Value, out var fb))
+                        {
+                            if (fb <= 0f) Warn(l, $"fireBuffer must be above 0; got {fb}");
+                            else rule.FireBuffer = fb;
+                        }
+                        else WarnNum(l);
+                        break;
+
+                    case "phaseexempttamed":
+                        if (bool.TryParse(l.Value, out var pex)) rule.PhaseExemptTamed = pex;
                         else Warn(l, $"expected true/false, got '{l.Value}'");
+                        break;
+
+                    case "stalkseconds":
+                        if (F(l.Value, out var ss))
+                        {
+                            if (ss < 0f) Warn(l, $"stalkSeconds cannot be negative; got {ss}");
+                            else rule.StalkSeconds = ss;
+                        }
+                        else WarnNum(l);
+                        break;
+
+                    case "stalkradius":
+                        if (F(l.Value, out var sr))
+                        {
+                            if (sr <= 0f) Warn(l, $"stalkRadius must be above 0; got {sr}");
+                            else rule.StalkRadius = sr;
+                        }
+                        else WarnNum(l);
+                        break;
+
+                    case "pouncerange":
+                        if (F(l.Value, out var pr))
+                        {
+                            if (pr < 0f) Warn(l, $"pounceRange cannot be negative; got {pr}");
+                            else rule.PounceRange = pr;
+                        }
+                        else WarnNum(l);
                         break;
 
                     case "stancecycling":

@@ -43,7 +43,10 @@ namespace CreatureControl
             // the lox alone still takes it, and the calf is not a bodyguard.
             if (rule != null && rule.Baby == true) return 0f;
 
-            float value = rule?.Threat ?? Plugin.DefaultThreat;
+            // ThreatValue, not rule.Threat: it folds in the day/night profile, so
+            // a creature that is genuinely more dangerous after dark is also
+            // READ as more dangerous by everything deciding whether to fight it.
+            float value = st != null ? st.ThreatValue : (rule?.Threat ?? Plugin.DefaultThreat);
 
             // Creature Level & Loot Control hands out up to five stars at +100%
             // health and +50% damage each. Flat threat would have a five-star
