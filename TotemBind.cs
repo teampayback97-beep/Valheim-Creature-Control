@@ -20,10 +20,11 @@ namespace CreatureControl
         // ------------------------------------------------------------- piece
 
         /// <summary>Which vanilla piece the leash is cloned from - a single,
-        /// easily-swapped constant, exactly per spec. "guard_stone" is a
-        /// placeholder; swap it here once the actual piece is picked in-game
-        /// and every leash in the build swaps with it.</summary>
-        const string SourcePrefab = "guard_stone";
+        /// easily-swapped constant, exactly per spec. The Ward ("piece_ward")
+        /// already IS a radius-of-influence marker in vanilla, which is
+        /// exactly what a leash is, so it's the thematic fit as well as the
+        /// practical one.</summary>
+        const string SourcePrefab = "piece_ward";
 
         public const string LeashPrefabName = "CC_TrollLoggingLeash";
 
@@ -70,6 +71,21 @@ namespace CreatureControl
                         new Jotunn.Configs.RequirementConfig { Item = "Stone", Amount = 5 },
                     }
                 };
+
+                // The Ward is picked for its radius-of-influence THEME, not its
+                // actual function - cloning it also clones its real PrivateArea
+                // component (activation/naming interact, Eitr upkeep, its own
+                // hostile-ward-off behaviour), which would fight with the
+                // troll's own combat detection and give players an interact
+                // prompt that does the wrong thing. Strip it so the leash is a
+                // pure marker; TrollLogging/TotemBind supply all the actual
+                // radius behaviour themselves.
+                var ward = prefab.GetComponent<PrivateArea>();
+                if (ward != null) UnityEngine.Object.DestroyImmediate(ward);
+                else if (Plugin.Verbose)
+                    Plugin.Log.LogWarning(
+                        $"'{SourcePrefab}' had no PrivateArea component to strip - " +
+                        "double-check it isn't carrying its own ward behaviour into the leash.");
 
                 var piece = new Jotunn.Entities.CustomPiece(prefab, fixReference: true, config);
                 Jotunn.Managers.PieceManager.Instance.AddPiece(piece);

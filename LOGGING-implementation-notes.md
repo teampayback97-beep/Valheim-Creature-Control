@@ -17,10 +17,15 @@ compiled**. Treat this file as the punch list for the first real build.
   it under a different folder name (`ValheimModding-Jotunn`, etc.). The build
   will fail loudly on this one (`CheckPaths` target) rather than silently.
 
-- **`TotemBind.cs` `SourcePrefab = "guard_stone"`** — explicitly a placeholder
-  per the spec ("intentionally left open — user will decide in-game"). It's a
-  single constant, so swapping it is a one-line change once you've picked the
-  real piece.
+- **`TotemBind.cs` `SourcePrefab`** — now `"piece_ward"` (the Ward), picked
+  because it's already a radius-of-influence marker in vanilla. `Register()`
+  strips the cloned prefab's `PrivateArea` component so the leash doesn't also
+  function as a real Ward (activation/naming interact, Eitr upkeep, its own
+  hostile-warding behaviour, which would otherwise fight with the troll's own
+  combat detection). **Unverified**: `PrivateArea` is my best recollection of
+  the Ward's actual component type name/namespace — confirm against the
+  decompile, and check whether the Ward carries any other components worth
+  stripping too (its own `Piece`/icon setup should be harmless to keep).
 
 - **Jotunn `PieceConfig`** — `PieceTable = "Hammer"` and `Category = "Misc"`
   are the values I'm most confident are stable across Jotunn versions, but the
