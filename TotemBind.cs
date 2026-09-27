@@ -115,9 +115,13 @@ namespace CreatureControl
 
         // -------------------------------------------------------- world scan
         // One shared scan for every logging troll, on a timer - mirrors
-        // FireAversion's Rebuild(), sourced from Piece.m_allPieces (vanilla's
-        // own live list of every placed piece) rather than a fresh
-        // FindObjectsByType sweep, since pieces already maintain one.
+        // FireAversion's Rebuild(). Piece.m_allPieces is private (confirmed
+        // via dump.py against the real assembly - the public surface only
+        // exposes Piece.GetAllPiecesInRadius(center, radius, list), which
+        // needs a center point we don't have for a world-wide leash scan), so
+        // this falls back to a timer-gated FindObjectsByType sweep instead -
+        // the same pattern TrollLogging.cs already uses for felled-log and
+        // item-drop scans.
         static GameObject[] _snap = new GameObject[8];
         static int _n;
         static float _nextScan;
@@ -134,10 +138,9 @@ namespace CreatureControl
         static void Rebuild()
         {
             _n = 0;
-            var all = Piece.m_allPieces;
-            if (all == null) return;
+            var all = UnityEngine.Object.FindObjectsByType<Piece>(FindObjectsSortMode.None);
 
-            for (int i = 0; i < all.Count; i++)
+            for (int i = 0; i < all.Length; i++)
             {
                 var p = all[i];
                 if (p == null) continue;
@@ -198,21 +201,21 @@ namespace CreatureControl
         /// inside it.</summary>
         public static GameObject FindNearestChest(Vector3 leashPos)
         {
-            var all = Piece.m_allPieces;
-            if (all == null) return null;
+            // Containers enumerate directly - no need to go through every
+            // Piece and filter, now that this isn't reading the private
+            // Piece.m_allPieces list anyway.
+            var all = UnityEngine.Object.FindObjectsByType<Container>(FindObjectsSortMode.None);
 
             GameObject best = null;
             float bestSq = float.MaxValue;
             float rSq = Plugin.LoggingLeashRadius * Plugin.LoggingLeashRadius;
 
-            for (int i = 0; i < all.Count; i++)
+            for (int i = 0; i < all.Length; i++)
             {
-                var p = all[i];
-                if (p == null) continue;
-                var go = p.gameObject;
-                if (go == null) continue;
-                var c = go.GetComponent<Container>();
+                var c = all[i];
                 if (c == null) continue;
+                var go = c.gameObject;
+                if (go == null) continue;
 
                 float sq = (go.transform.position - leashPos).sqrMagnitude;
                 if (sq > rSq) continue;

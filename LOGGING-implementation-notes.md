@@ -1,10 +1,48 @@
 # Troll Logging — implementation notes
 
-**STATUS: WORK IN PROGRESS — not yet build-verified in a real game.** A
-startup log warning in `Plugin.cs` and header notices in `TrollLogging.cs`/
-`TotemBind.cs` point back to this file. Once everything below is resolved and
-the feature has actually been run and tested in-game, remove all three of
-those markers (and this line) to flag it complete.
+**STATUS: COMPILE-VERIFIED, NOT YET IN-GAME TESTED.** Compiled clean
+(0 errors) against the real assembly_valheim.dll, UnityEngine modules,
+BepInEx/0Harmony, and the real Jotunn.dll from the user's own profile — see
+"Compile-check pass" below for every fix that took to get there. A startup
+log warning in `Plugin.cs` and header notices in `TrollLogging.cs`/
+`TotemBind.cs` still point back to this file; remove all three markers (and
+this line) once it's been run and tested in-game.
+
+## Compile-check pass (fixed against the real assembly)
+
+Every item below was a genuine compile error against the real
+`assembly_valheim.dll` / `Jotunn.dll` — the cross-checking against
+Jotunn/RandyKnapp source got close, but these five were still wrong:
+
+- **`ItemDrop.m_nview` / `ItemDrop.Save()` are private.** Fixed by fetching
+  `drop.GetComponent<ZNetView>()` instead (ZNetView is just a MonoBehaviour on
+  the same GameObject) for the ownership check/claim/destroy, and calling the
+  public `drop.SetStack(newValue)` (confirmed via IL: it re-checks ownership
+  and calls the private `Save()` internally) instead of touching
+  `m_itemData.m_stack` directly.
+- **`Inventory.AddItem` is 8 args, not 6, and returns `ItemData` not `bool`.**
+  Real signature (confirmed via pnames.py against the live assembly):
+  `AddItem(string name, int stack, int quality, int variant, long crafterID,
+  string crafterName, bool cheated, bool pickedUp) -> ItemData`. Fixed the
+  call site and the null-check.
+- **`Container.Save()` is private.** Container wires it into
+  `Inventory.m_onChanged` in its own `Awake()` (confirmed via IL), and that
+  `Action` field is public, so `Deposit()` now calls
+  `inv.m_onChanged?.Invoke()` instead.
+- **`Piece.m_allPieces` is private**, both in `TotemBind.Rebuild()` (the
+  world-wide leash scan) and `FindNearestChest()`. The only public
+  alternative, `Piece.GetAllPiecesInRadius(center, radius, list)`, needs a
+  center point the leash scan doesn't have, so both now use
+  `FindObjectsByType` instead (`Piece` for the leash scan, `Container`
+  directly for the chest search) — the same pattern `TrollLogging.cs` already
+  uses for felled-log and item-drop scans, timer-gated the same way.
+- **Jotunn's `HintPath` guess was wrong**, and `UnityEngine.AssetBundleModule`
+  was missing entirely. Confirmed the real folder is
+  `BepInEx\plugins\ValheimModding-Jotunn\Jotunn.dll` on this profile (fixed in
+  `CreatureControl.csproj`); Jotunn's own `CustomPiece`/`PieceConfig` API
+  touches `AssetBundle` in its public signatures even though nothing here
+  loads a bundle, so `CS0012` needed that module referenced too (added, real
+  DLL confirmed present under the Valheim install's Managed folder).
 
 Everything in the spec artifact is implemented: `CreatureState.cs`, `Plugin.cs`,
 `CreatureRules.cs`, `ConfigLoader.cs`, `Patches.cs` modified; `TrollLogging.cs`

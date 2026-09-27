@@ -60,18 +60,23 @@
     <Reference Include="UnityEngine.InputLegacyModule">
       <HintPath>$(ValheimManaged)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private>
     </Reference>
+    <!-- Needed because Jotunn's public CustomPiece/PieceConfig API surface
+         touches AssetBundle in its own method signatures, even though this
+         mod never loads a bundle itself - without this reference the compiler
+         throws CS0012 the moment TotemBind.cs constructs a CustomPiece. -->
+    <Reference Include="UnityEngine.AssetBundleModule">
+      <HintPath>$(ValheimManaged)\UnityEngine.AssetBundleModule.dll</HintPath><Private>false</Private>
+    </Reference>
     <Reference Include="BepInEx">
       <HintPath>$(BepInExCore)\BepInEx.dll</HintPath><Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">
       <HintPath>$(BepInExCore)\0Harmony.dll</HintPath><Private>false</Private>
     </Reference>
-    <!-- TODO(verify path): Jotunn's plugin folder name depends on how Gale
-         extracted the Thunderstore package - it may be "Jotunn" or
-         "ValheimModding-Jotunn". Fix this HintPath if the build errors with
-         "could not find Jotunn.dll". -->
+    <!-- Confirmed on the real profile: Gale extracted this under
+         "ValheimModding-Jotunn", not "Jotunn". -->
     <Reference Include="Jotunn">
-      <HintPath>$(GaleProfile)\BepInEx\plugins\Jotunn\Jotunn.dll</HintPath><Private>false</Private>
+      <HintPath>$(GaleProfile)\BepInEx\plugins\ValheimModding-Jotunn\Jotunn.dll</HintPath><Private>false</Private>
     </Reference>
   </ItemGroup>
 
@@ -81,7 +86,7 @@
            Text="Can't find assembly_valheim.dll under &quot;$(ValheimManaged)&quot;. Edit ValheimManaged in CreatureControl.csproj." />
     <Error Condition="!Exists('$(BepInExCore)\BepInEx.dll')"
            Text="Can't find BepInEx.dll under &quot;$(BepInExCore)&quot;. Edit GaleProfile in CreatureControl.csproj." />
-    <Error Condition="!Exists('$(GaleProfile)\BepInEx\plugins\Jotunn\Jotunn.dll')"
+    <Error Condition="!Exists('$(GaleProfile)\BepInEx\plugins\ValheimModding-Jotunn\Jotunn.dll')"
            Text="Can't find Jotunn.dll at the Reference's HintPath. Find the real path under $(GaleProfile)\BepInEx\plugins and fix the Jotunn Reference's HintPath in CreatureControl.csproj." />
   </Target>
 

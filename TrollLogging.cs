@@ -391,15 +391,21 @@ namespace CreatureControl
             st.CarryItem = name;
             st.CarryCount = already + take;
 
-            if (drop.m_nview == null || !drop.m_nview.IsValid()) return;
-            if (!drop.m_nview.IsOwner()) drop.m_nview.ClaimOwnership();
-            if (!drop.m_nview.IsOwner()) return;
+            // ItemDrop's own m_nview/Save() are private (confirmed via
+            // dump.py against the real assembly) - ZNetView is just a
+            // MonoBehaviour sitting on the same GameObject, so fetch it as a
+            // component instead of reaching for the private field.
+            var nview = drop.GetComponent<ZNetView>();
+            if (nview == null || !nview.IsValid()) return;
+            if (!nview.IsOwner()) nview.ClaimOwnership();
+            if (!nview.IsOwner()) return;
 
-            if (take >= have) drop.m_nview.Destroy();
+            if (take >= have) nview.Destroy();
             else
             {
-                drop.m_itemData.m_stack -= take;
-                drop.Save();
+                // SetStack() is the public equivalent of "set m_stack then
+                // Save()" - it re-checks ownership itself and persists.
+                drop.SetStack(have - take);
             }
         }
 
@@ -458,10 +464,16 @@ namespace CreatureControl
             var inv = container.GetInventory();
             if (inv == null) return;
 
-            bool added = inv.AddItem(prefab.name, st.CarryCount, 1, 0, 0L, "");
-            if (!added) return;   // chest is full; keep the stack, retry next tick
+            // Real overload (confirmed via pnames.py) is 8 args and returns
+            // the created ItemData, not a bool - null means it didn't fit.
+            var added = inv.AddItem(prefab.name, st.CarryCount, 1, 0, 0L, "", false, false);
+            if (added == null) return;   // chest is full; keep the stack, retry next tick
 
-            container.Save();
+            // Container.Save() is private; Container wires its own Save into
+            // Inventory.m_onChanged (confirmed via IL of Container.Awake), and
+            // that Action field is public, so invoking it triggers the same
+            // save without reaching for the private method.
+            inv.m_onChanged?.Invoke();
 
             if (Plugin.Verbose)
                 Plugin.Log.LogInfo($"[logging] {st.Prefab} deposited {st.CarryCount}x {st.CarryItem}.");
