@@ -25,11 +25,14 @@ namespace CreatureControl
         // ------------------------------------------------------------- piece
 
         /// <summary>Which vanilla piece the leash is cloned from - a single,
-        /// easily-swapped constant, exactly per spec. The Ward ("piece_ward")
-        /// already IS a radius-of-influence marker in vanilla, which is
-        /// exactly what a leash is, so it's the thematic fit as well as the
-        /// practical one.</summary>
-        const string SourcePrefab = "piece_ward";
+        /// easily-swapped constant, exactly per spec. The Ward's real prefab
+        /// name is "guard_stone" (confirmed in the build menu and against
+        /// valheimcheats.com - "piece_ward" was a wrong guess and is why
+        /// registration failed at startup with "can not find base prefab").
+        /// The Ward already IS a radius-of-influence marker in vanilla,
+        /// which is exactly what a leash is, so it's the thematic fit as
+        /// well as the practical one.</summary>
+        const string SourcePrefab = "guard_stone";
 
         public const string LeashPrefabName = "CC_TrollLoggingLeash";
 
@@ -85,12 +88,31 @@ namespace CreatureControl
                 // prompt that does the wrong thing. Strip it so the leash is a
                 // pure marker; TrollLogging/TotemBind supply all the actual
                 // radius behaviour themselves.
+                // Grab the Ward's own ground-ring radius indicator (a
+                // CircleProjector child - the same one vanilla uses to show
+                // a Ward's edge) before stripping PrivateArea; it lives on
+                // its own child GameObject, so removing the PrivateArea
+                // component doesn't take it down too. Keep it always
+                // visible and sized to the configured leash radius -
+                // Rebuild() below keeps every already-placed leash's ring
+                // in sync if the radius setting changes later.
                 var ward = prefab.GetComponent<PrivateArea>();
+                CircleProjector marker = ward != null ? ward.m_areaMarker : null;
                 if (ward != null) UnityEngine.Object.DestroyImmediate(ward);
                 else if (Plugin.Verbose)
                     Plugin.Log.LogWarning(
                         $"'{SourcePrefab}' had no PrivateArea component to strip - " +
                         "double-check it isn't carrying its own ward behaviour into the leash.");
+
+                if (marker != null)
+                {
+                    marker.m_radius = Plugin.LoggingLeashRadius;
+                    marker.gameObject.SetActive(true);
+                }
+                else if (Plugin.Verbose)
+                    Plugin.Log.LogWarning(
+                        $"'{SourcePrefab}' had no area-marker ring to reuse - the leash will bind " +
+                        "and work normally, it just won't show its radius on the ground.");
 
                 var piece = new Jotunn.Entities.CustomPiece(prefab, fixReference: true, config);
                 if (!Jotunn.Managers.PieceManager.Instance.AddPiece(piece))
@@ -139,6 +161,7 @@ namespace CreatureControl
         {
             _n = 0;
             var all = UnityEngine.Object.FindObjectsByType<Piece>(FindObjectsSortMode.None);
+            float radius = Plugin.LoggingLeashRadius;
 
             for (int i = 0; i < all.Length; i++)
             {
@@ -148,6 +171,14 @@ namespace CreatureControl
                 if (go == null) continue;
                 if (!string.Equals(CreatureRules.CleanName(go.name), LeashPrefabName,
                         StringComparison.OrdinalIgnoreCase)) continue;
+
+                // Keeps every already-placed leash's ring matched to the
+                // current config value - picks up a live radius change
+                // (Configuration Manager) within one scan interval, same as
+                // every other logging tunable.
+                var marker = go.GetComponentInChildren<CircleProjector>(true);
+                if (marker != null && !Mathf.Approximately(marker.m_radius, radius))
+                    marker.m_radius = radius;
 
                 if (_n >= _snap.Length) Array.Resize(ref _snap, _snap.Length * 2);
                 _snap[_n++] = go;

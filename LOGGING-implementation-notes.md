@@ -1,12 +1,37 @@
 # Troll Logging — implementation notes
 
-**STATUS: COMPILE-VERIFIED, NOT YET IN-GAME TESTED.** Compiled clean
+**STATUS: COMPILE-VERIFIED, RAN IN-GAME ONCE — ONE STARTUP BUG FOUND AND FIXED, NOT YET RE-TESTED IN-GAME.** Compiled clean
 (0 errors) against the real assembly_valheim.dll, UnityEngine modules,
 BepInEx/0Harmony, and the real Jotunn.dll from the user's own profile — see
 "Compile-check pass" below for every fix that took to get there. A startup
 log warning in `Plugin.cs` and header notices in `TrollLogging.cs`/
 `TotemBind.cs` still point back to this file; remove all three markers (and
-this line) once it's been run and tested in-game.
+this line) once the leash has been placed and used successfully in-game.
+
+## First in-game run — startup bug found and fixed
+
+The log showed:
+```
+[Warning:Jotunn.Managers.PrefabManager] Failed to clone prefab, can not find base prefab with name: piece_ward
+[Error  :CreatureControl] Could not clone 'piece_ward' for the Troll Logging Leash - logging will have nothing to bind to until this is fixed.
+```
+`piece_ward` was a wrong guess for the Ward's real prefab name — confirmed
+against valheimcheats.com and the user's own build menu that it's actually
+`guard_stone`. Fixed in `TotemBind.cs`'s `SourcePrefab` constant.
+
+While in there, added the two things asked for alongside the fix:
+
+- **Leash Radius is now clamped 10-50m** (was 5-100) in `Plugin.cs`.
+- **Every placed leash shows its radius on the ground as a ring** — reusing
+  the Ward's own `PrivateArea.m_areaMarker` (a `CircleProjector`, the same
+  component vanilla uses for the Ward's edge indicator). It's grabbed
+  *before* `PrivateArea` is stripped (it lives on its own child
+  `GameObject`, so destroying the `PrivateArea` component doesn't take it
+  down too), forced always-visible instead of only-on-interact, and kept in
+  sync with the config value by `TotemBind.Rebuild()` — the same periodic
+  scan that already re-surveys every placed leash every `Leash Scan
+  Seconds`, so a live radius change (Configuration Manager) reaches every
+  already-placed leash within one scan interval, no new plumbing needed.
 
 ## Compile-check pass (fixed against the real assembly)
 

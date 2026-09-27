@@ -455,8 +455,9 @@ namespace CreatureControl
             _leashRadius = Config.Bind("Logging", "Leash Radius", 20f,
                 new ConfigDescription(
                     "How far a Troll Logging Leash's binding and work area reaches. A logging " +
-                    "troll never paths outside this while bound.",
-                    new AcceptableValueRange<float>(5f, 100f)));
+                    "troll never paths outside this while bound. Every placed leash shows its " +
+                    "radius on the ground as a ring, same as a vanilla Ward's edge marker.",
+                    new AcceptableValueRange<float>(10f, 50f)));
             _chopInterval = Config.Bind("Logging", "Chop Interval", 2f,
                 new ConfigDescription(
                     "Seconds between hits once a logging troll is in range of its target tree.",
