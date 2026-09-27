@@ -135,18 +135,20 @@ namespace CreatureControl
         public static void LoadAll(string dir)
         {
             var factions = BuildFactions(dir);
-            var creatures = BuildCreatures(dir, factions, out var fires);
+            var creatures = BuildCreatures(dir, factions, out var fires, out var trees);
 
             FactionRegistry.Install(factions);
             CreatureRules.Install(creatures);
             FireSources.Install(fires);
+            TreeSources.Install(trees);
 
             Plugin.Log.LogInfo(
                 $"Loaded {creatures.ByPrefab.Count} creature rule(s), " +
                 $"{creatures.ByFaction.Count} faction rule(s)" +
                 (creatures.Fallback != null ? ", + a [*] fallback" : "") +
                 (factions.HasCustom ? $", {factions.Untargetable.Count} untargetable faction(s)" : "") +
-                (fires.Count > 0 ? $", {fires.Count} fire source(s)" : ""));
+                (fires.Count > 0 ? $", {fires.Count} fire source(s)" : "") +
+                (trees.Count > 0 ? $", {trees.Count} logging-tree override(s)" : ""));
         }
 
         // ---------------------------------------------------------------- factions
@@ -223,10 +225,12 @@ namespace CreatureControl
         // --------------------------------------------------------------- creatures
 
         static CreatureRules.Store BuildCreatures(string dir, FactionRegistry.Store factions,
-                                                  out FireSources.Store fires)
+                                                  out FireSources.Store fires,
+                                                  out TreeSources.Store trees)
         {
             var store = new CreatureRules.Store();
             fires = new FireSources.Store();
+            trees = new TreeSources.Store();
             var path = Path.Combine(dir, CreaturesFile);
             if (!File.Exists(path)) WriteDefaultCreatures(path);
 
@@ -243,6 +247,21 @@ namespace CreatureControl
                         fires.ByName[l.Key] = ft;
                     else
                         Warn(l, $"expected torch/campfire/bonfire, got '{l.Value}'");
+                    continue;
+                }
+
+                // [LoggingTrees] is the same idea for the logging troll: TreeBase
+                // is the real signal (see TrollLogging.cs) and already covers
+                // every tree; this table only EXCLUDES a name from that (a
+                // sapling still carrying TreeBase, say). true is accepted too,
+                // for symmetry, but is a no-op - nothing without TreeBase is
+                // ever scanned in the first place.
+                if (string.Equals(l.Section, "LoggingTrees", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (bool.TryParse(l.Value, out var loggable))
+                        trees.ByName[l.Key] = loggable;
+                    else
+                        Warn(l, $"expected true/false, got '{l.Value}'");
                     continue;
                 }
 
@@ -464,6 +483,11 @@ namespace CreatureControl
                         else Warn(l, $"expected true/false, got '{l.Value}'");
                         break;
 
+                    case "loggingmode":
+                        if (bool.TryParse(l.Value, out var lm)) rule.LoggingMode = lm;
+                        else Warn(l, $"expected true/false, got '{l.Value}'");
+                        break;
+
                     default:
                         Warn(l, $"unknown key '{l.Key}'");
                         break;
@@ -552,6 +576,11 @@ namespace CreatureControl
 #                      0 disables fleeing entirely
 #    faction           see CreatureControl.Factions.cfg (creature sections only)
 #    stanceCycling     true | false - may you cycle this pet's stance in-game
+#    loggingMode       true | false - may a tame of this kind run the Troll
+#                      Logging Leash work loop. Off unless a line turns it on -
+#                      unlike stanceCycling this is opt-IN, since it drives the
+#                      creature into a totem-bound job rather than just gating
+#                      a stance the player already controls.
 #
 #  A TERRITORIAL CREATURE is just a small radius plus Aggressive:
 #    detection range = how far it cares, stance = what it does when it cares.
@@ -563,6 +592,16 @@ namespace CreatureControl
 tamedBehavior  = Neutral
 tamedViewRange = 15
 tamedHearRange = 15
+
+[Troll]
+loggingMode = true
+
+# [LoggingTrees] - every prefab with a TreeBase component (every vanilla tree,
+# and almost certainly every modded one) is already choppable. This table only
+# EXCLUDES one by name - there is no way to force in something that carries no
+# TreeBase of its own.
+#   Beech_small = false     # exclude a sapling that still carries TreeBase
+[LoggingTrees]
 ");
             Plugin.Log.LogInfo($"Wrote starter config: {Path.GetFileName(path)}");
         }

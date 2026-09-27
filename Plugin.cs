@@ -72,6 +72,15 @@ namespace CreatureControl
         static ConfigEntry<FireTier> _fireUnknown;
         static ConfigEntry<float> _fireGuessTorch, _fireGuessCampfire;
 
+        static ConfigEntry<bool> _loggingOn;
+        static ConfigEntry<KeyboardShortcut> _loggingKey;
+        static ConfigEntry<float> _leashRadius;
+        static ConfigEntry<float> _chopInterval;
+        static ConfigEntry<float> _chopDamage;
+        static ConfigEntry<float> _treeScanInterval;
+        static ConfigEntry<float> _leashScanInterval;
+        static ConfigEntry<float> _loggingReturnTimeout;
+
         public static bool Verbose => _verbose != null && _verbose.Value;
         public static bool AllowStanceCycling => _cycling == null || _cycling.Value;
         public static float GrudgeSeconds => _grudge == null ? 30f : _grudge.Value;
@@ -99,6 +108,20 @@ namespace CreatureControl
         public static FireTier FireUnknownTier => _fireUnknown == null ? FireTier.Campfire : _fireUnknown.Value;
         public static float FireRadiusGuessTorch => _fireGuessTorch == null ? 1.5f : _fireGuessTorch.Value;
         public static float FireRadiusGuessCampfire => _fireGuessCampfire == null ? 3.5f : _fireGuessCampfire.Value;
+
+        public static bool LoggingEnabled => _loggingOn == null || _loggingOn.Value;
+        public static string LoggingKeyLabel =>
+            _loggingKey == null ? "L.Ctrl + X" : _loggingKey.Value.ToString();
+        public static float LoggingLeashRadius => _leashRadius == null ? 20f : _leashRadius.Value;
+        public static float LoggingChopInterval => _chopInterval == null ? 2f : _chopInterval.Value;
+        /// <summary>Flat "chop" HitData damage per hit, independent of the
+        /// troll's own real attack stats - simplicity over fidelity, so the
+        /// felling rate is tunable in one number rather than tied to
+        /// whatever a troll's fists happen to deal.</summary>
+        public static float LoggingChopDamage => _chopDamage == null ? 50f : _chopDamage.Value;
+        public static float LoggingTreeScanInterval => _treeScanInterval == null ? 3f : _treeScanInterval.Value;
+        public static float LoggingLeashScanInterval => _leashScanInterval == null ? 5f : _leashScanInterval.Value;
+        public static float LoggingReturnTimeout => _loggingReturnTimeout == null ? 30f : _loggingReturnTimeout.Value;
         public static float StarThreatScale => _starScale == null ? 0.6f : _starScale.Value;
         public static float PetThreatWeight => _petWeight == null ? 0.5f : _petWeight.Value;
         public static float PlayerThreatScale => _playerScale == null ? 1f : _playerScale.Value;
@@ -421,6 +444,42 @@ namespace CreatureControl
                 "knocking holes in your walls. They can still hit trees, rocks and everything " +
                 "else in the world exactly as before; this only shields player-built pieces.");
 
+            _loggingOn = Config.Bind("Logging", "Enable Troll Logging", true,
+                "Master switch for the Troll Logging Leash feature. Off leaves the hotkey and " +
+                "the leash piece inert, whatever loggingMode says per creature.");
+            _loggingKey = Config.Bind("Logging", "Logging Toggle Key",
+                new KeyboardShortcut(KeyCode.X, KeyCode.LeftControl),
+                "Look at a tame with loggingMode = true and press this to toggle its logging " +
+                "work loop on or off. Separate from the stance-cycle key - the two are " +
+                "independent axes on the same creature.");
+            _leashRadius = Config.Bind("Logging", "Leash Radius", 20f,
+                new ConfigDescription(
+                    "How far a Troll Logging Leash's binding and work area reaches. A logging " +
+                    "troll never paths outside this while bound.",
+                    new AcceptableValueRange<float>(5f, 100f)));
+            _chopInterval = Config.Bind("Logging", "Chop Interval", 2f,
+                new ConfigDescription(
+                    "Seconds between hits once a logging troll is in range of its target tree.",
+                    new AcceptableValueRange<float>(0.5f, 10f)));
+            _chopDamage = Config.Bind("Logging", "Chop Damage", 50f,
+                new ConfigDescription(
+                    "Flat chop damage per hit, independent of the troll's own attack stats.",
+                    new AcceptableValueRange<float>(1f, 1000f)));
+            _treeScanInterval = Config.Bind("Logging", "Tree Scan Seconds", 3f,
+                new ConfigDescription(
+                    "How often the world's trees are re-surveyed. One shared scan for every " +
+                    "logging troll, not one each.",
+                    new AcceptableValueRange<float>(0.5f, 15f)));
+            _leashScanInterval = Config.Bind("Logging", "Leash Scan Seconds", 5f,
+                new ConfigDescription(
+                    "How often placed Troll Logging Leash pieces are re-surveyed.",
+                    new AcceptableValueRange<float>(0.5f, 20f)));
+            _loggingReturnTimeout = Config.Bind("Logging", "Return Timeout Seconds", 30f,
+                new ConfigDescription(
+                    "How long a logging troll gets to walk back inside its leash radius after " +
+                    "combat clears before it is simply teleported the rest of the way there.",
+                    new AcceptableValueRange<float>(5f, 180f)));
+
             LoadConfigs();
 
             _harmony = new Harmony(GUID);
@@ -437,6 +496,11 @@ namespace CreatureControl
             // Optional, resolved by name: fixes BetterTames' pet teleport being
             // undone by physics. No-op if BetterTames isn't installed.
             TeleportFix.TryPatch(_harmony);
+
+            // Registers the "Troll Logging Leash" piece via Jotunn. Deferred to
+            // Jotunn's own OnVanillaPrefabsAvailable event internally, so this
+            // is safe to call before ZNetScene/ObjectDB exist.
+            TotemBind.Init();
 
             StartWatching();
             Log.LogInfo($"{NAME} v{VERSION} ready.");
@@ -482,6 +546,7 @@ namespace CreatureControl
         {
             HandleReload();
             HandleStanceKey();
+            HandleLoggingKey();
 
             // One clock read for the whole mod. Only does real work on the two
             // ticks a day when it actually turns over.
@@ -490,6 +555,14 @@ namespace CreatureControl
             // Delivers any queued herd panic alerts whose reaction delay has
             // elapsed. A handful of entries at most, so this costs nothing.
             FearAlert.Tick();
+
+            // World-scan halves of the logging feature - trees and leash
+            // pieces - each on their own timer, shared by every logging troll.
+            if (LoggingEnabled)
+            {
+                TrollLogging.Tick();
+                TotemBind.Tick();
+            }
 
             // Cheap: returns immediately once written, and before that it only
             // tests whether ZNetScene has finished registering prefabs.
@@ -707,6 +780,39 @@ namespace CreatureControl
                            $"{name}: {next.Pretty()}", 0, null, false);
         }
 
+        /// <summary>
+        /// Logging is a second, independent hotkey rather than folded into the
+        /// stance cycle - a troll can be Neutral-and-logging or
+        /// Aggressive-and-logging, so the two have to be toggled separately.
+        /// Same interaction-slot reasoning as HandleStanceKey: both of a tame's
+        /// interact slots are already spoken for by vanilla.
+        /// </summary>
+        void HandleLoggingKey()
+        {
+            if (!LoggingEnabled || _loggingKey == null) return;
+            if (!_loggingKey.Value.IsDown()) return;
+            if (IsTyping()) return;
+
+            var player = Player.m_localPlayer;
+            if (player == null) return;
+
+            var chr = player.GetHoverCreature();
+            if (chr == null || !chr.IsTamed()) return;
+
+            var st = CreatureState.For(chr);
+            if (st == null || !st.CanLog) return;
+
+            bool next = !st.IsLogging;
+            st.SetLogging(next, persist: true);
+
+            var name = chr.m_name;
+            var tameable = chr.gameObject.GetComponent<Tameable>();
+            if (tameable != null) name = tameable.GetHoverName();
+
+            player.Message(MessageHud.MessageType.Center,
+                           $"{name}: logging {(next ? "ON" : "OFF")}", 0, null, false);
+        }
+
         /// <summary>Push freshly-loaded rules onto creatures already in the world,
         /// so tuning a number doesn't mean reloading the save.</summary>
         void ReapplyToLoadedCreatures()
@@ -741,6 +847,8 @@ namespace CreatureControl
             FireAversion.Reset();
             FearAlert.Reset();
             Phase.Forget();
+            TrollLogging.Reset();
+            TotemBind.Reset();
         }
     }
 }

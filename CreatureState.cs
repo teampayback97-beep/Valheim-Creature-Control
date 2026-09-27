@@ -674,6 +674,108 @@ namespace CreatureControl
 
         public BehaviorMode Mode => _mode;
 
+        // ---- troll logging --------------------------------------------------------
+        // Deliberately independent of BehaviorMode/ModeOverridden above - a troll
+        // can be Neutral-and-logging or Aggressive-and-logging, the two axes are
+        // never merged. See TrollLogging.cs / TotemBind.cs for the behaviour this
+        // state drives; this is just the per-creature record of it.
+        public const string ZdoLoggingKey = "CC_logging";
+
+        bool _loggingOn;
+        bool _loggingOverridden;
+
+        /// <summary>Config permission AND the creature being a live, tamed
+        /// candidate. Opt-in only (see CreatureRule.LoggingMode) - unlike stance
+        /// cycling, this is not something every tame should quietly inherit.</summary>
+        public bool CanLog =>
+            Plugin.LoggingEnabled && Chr != null && Chr.IsTamed() &&
+            Rule != null && Rule.LoggingMode == true;
+
+        /// <summary>Both the in-game toggle and the config permission have to
+        /// hold for the work loop to actually run.</summary>
+        public bool IsLogging => _loggingOn && CanLog;
+
+        /// <summary>The "Troll Logging Leash" this troll currently belongs to,
+        /// or null when unbound. Continuous, proximity-based - re-evaluated by
+        /// TotemBind every tick, never set once at spawn.</summary>
+        public GameObject BoundLeash;
+
+        /// <summary>The tree currently being walked to / chopped. Cleared on
+        /// tree death, on losing the bind, or when logging is toggled off.</summary>
+        public GameObject LogTargetTree;
+
+        /// <summary>Cached the moment LogTargetTree is picked - a felled tree's
+        /// GameObject goes Unity-fake-null on death, so this is what tells the
+        /// troll where to look for its drops afterwards.</summary>
+        public Vector3 LogTargetPos;
+        public float ChopTimer;
+
+        /// <summary>Single carry slot: one item type, one count. See
+        /// TrollLogging.cs for why this is deliberately not a real inventory.</summary>
+        public string CarryItem;
+        public int CarryCount;
+        public bool HasCarry => !string.IsNullOrEmpty(CarryItem) && CarryCount > 0;
+
+        /// <summary>Time.time a logging troll's combat last cleared, or -1
+        /// while it is still fighting. Read by TrollLogging.DriveReturn to
+        /// drive the teleport-back fallback - a troll that has been trying to
+        /// walk home for too long is teleported the rest of the way rather
+        /// than left to wander forever.</summary>
+        float _combatClearedAt = -1f;
+        public void MarkInCombat() => _combatClearedAt = -1f;
+        public void MarkCombatClearedIfNew()
+        {
+            if (_combatClearedAt < 0f) _combatClearedAt = Time.time;
+        }
+        public float SecondsSinceCombatCleared =>
+            _combatClearedAt < 0f ? 0f : Time.time - _combatClearedAt;
+
+        /// <summary>Drops the current tree/chop timer, but keeps the bind and
+        /// the carry slot - a troll pulled off a tree by combat should not lose
+        /// the wood it is already holding.</summary>
+        public void ForgetLoggingWork()
+        {
+            LogTargetTree = null;
+            ChopTimer = 0f;
+        }
+
+        /// <summary>Full reset: called when logging is toggled off, or the
+        /// bind is lost outright.</summary>
+        void ForgetLogging()
+        {
+            ForgetLoggingWork();
+            BoundLeash = null;
+            CarryItem = null;
+            CarryCount = 0;
+            _combatClearedAt = -1f;
+        }
+
+        public void SetLogging(bool on, bool persist)
+        {
+            _loggingOn = on;
+            _loggingOverridden = true;
+            if (!on) ForgetLogging();
+            if (persist) SaveLogging();
+        }
+
+        public void SaveLogging()
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            if (!Nview.IsOwner()) Nview.ClaimOwnership();
+            if (!Nview.IsOwner()) return;
+            Nview.GetZDO().Set(ZdoLoggingKey, _loggingOn);
+        }
+
+        public void LoadLogging()
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            var zdo = Nview.GetZDO();
+            if (zdo == null) return;
+            if (!zdo.GetBool(ZdoLoggingKey, false)) return;   // absent key also reads false
+            _loggingOn = true;
+            _loggingOverridden = true;
+        }
+
         // Unity overloads == so a destroyed object compares equal to null.
         // OnDestroy therefore can't use `Chr != null` to find its own key - by
         // then it reads as null and the entry would leak for the whole session.
@@ -715,6 +817,7 @@ namespace CreatureControl
             // reliably attached that early, and a missed read would silently
             // lose a stance the player had chosen.
             if (!ModeOverridden) LoadMode();
+            if (!_loggingOverridden) LoadLogging();
 
             // A by-name rule may move the creature into another faction, and
             // that has to happen before we resolve faction-keyed rules.

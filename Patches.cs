@@ -252,23 +252,38 @@ namespace CreatureControl
             // and Patch_BaseAI_AvoidFire below reshapes that instead - which
             // gets the target-dropping, the alerting and the orbit pathing for
             // free rather than reimplementing them in front of it.
-            if (!Plugin.FearEnabled || !st.FearApplies) return true;
+            // Fear/flee outranks logging outright - checked first, every tick,
+            // so a logging troll that somehow also qualified for the fear
+            // check (FearApplies is false for every tamed creature today, so
+            // in practice the two never contest the same tick) could never
+            // keep chopping wood while genuinely threatened. See TrollLogging
+            // below for the logging branch this falls through to.
+            if (Plugin.FearEnabled && st.FearApplies)
+            {
+                var target = __instance.GetTargetCreature();
+                if (target == null) { st.ForgetFear(); st.ForgetStalk(); }
+                else
+                {
+                    if (st.WantsToFlee(target, out var from))
+                        return DriveAwayFrom(__instance, st, dt, from, ref __result);
 
-            // No target means nothing to be afraid of, and it also means vanilla
-            // needs this tick to go looking for one.
-            var target = __instance.GetTargetCreature();
-            if (target == null) { st.ForgetFear(); st.ForgetStalk(); return true; }
+                    // Not running. Is it working up to it? A hunter that walks
+                    // straight in is not stalking, so for a short window after
+                    // picking a target it holds its distance and circles instead
+                    // of closing. Runs after the fear check on purpose: something
+                    // that has decided to leave is not also circling.
+                    if (st.WantsToStalk(target) && AiMotion.CanOrbit)
+                        return Circle(__instance, st, dt, target, ref __result);
+                }
+            }
 
-            if (st.WantsToFlee(target, out var from))
-                return DriveAwayFrom(__instance, st, dt, from, ref __result);
-
-            // Not running. Is it working up to it? A hunter that walks straight
-            // in is not stalking, so for a short window after picking a target
-            // it holds its distance and circles instead of closing. Runs after
-            // the fear check on purpose: something that has decided to leave is
-            // not also circling.
-            if (st.WantsToStalk(target) && AiMotion.CanOrbit)
-                return Circle(__instance, st, dt, target, ref __result);
+            // The Troll Logging Leash work loop. Gated the same way the fear
+            // check above is - CanLog already requires the creature be tamed,
+            // so this only ever activates for a bound, config-permitted tame
+            // with its own hotkey toggled on (TrollLogging.DriveTick re-checks
+            // IsLogging itself and hands the tick straight back if it's off).
+            if (Plugin.LoggingEnabled && st.CanLog)
+                return TrollLogging.DriveTick(__instance, st, dt, ref __result);
 
             return true;
         }
@@ -606,14 +621,18 @@ namespace CreatureControl
     {
         static void Postfix(Tameable __instance, ref string __result)
         {
-            if (!Plugin.AllowStanceCycling) return;
             if (!__instance.IsTamed()) return;
 
             var st = CreatureState.For(__instance.gameObject.GetComponent<Character>());
-            if (st == null || st.Rule == null || st.Rule.StanceCycling == false) return;
+            if (st == null) return;
 
-            __result += $"\n[<color=yellow><b>{Plugin.CycleKeyLabel}</b></color>] stance: " +
-                        $"<color=orange>{st.Mode.Pretty()}</color>";
+            if (Plugin.AllowStanceCycling && !(st.Rule != null && st.Rule.StanceCycling == false))
+                __result += $"\n[<color=yellow><b>{Plugin.CycleKeyLabel}</b></color>] stance: " +
+                            $"<color=orange>{st.Mode.Pretty()}</color>";
+
+            if (Plugin.LoggingEnabled && st.CanLog)
+                __result += $"\n[<color=yellow><b>{Plugin.LoggingKeyLabel}</b></color>] logging: " +
+                            $"<color=orange>{(st.IsLogging ? "ON" : "OFF")}</color>";
         }
     }
 }

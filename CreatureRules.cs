@@ -108,6 +108,14 @@ namespace CreatureControl
 
         public bool? StanceCycling;
 
+        // --- troll logging ---------------------------------------------------
+        /// <summary>Config permission for the logging toggle. Unlike
+        /// StanceCycling this defaults to OFF (null / false both block) - the
+        /// feature drives a tamed creature into a totem-bound work loop, and
+        /// that should be an explicit opt-in per creature (Troll) rather than
+        /// something every tame quietly inherits.</summary>
+        public bool? LoggingMode;
+
         /// <summary>Copy any value this rule has no opinion about from a less
         /// specific rule. Called least-specific-last, so the first writer wins.</summary>
         public void FillFrom(CreatureRule lower)
@@ -125,6 +133,7 @@ namespace CreatureControl
             if (!FleeIfNotAlerted.HasValue) FleeIfNotAlerted = lower.FleeIfNotAlerted;
             if (!FleeIfLowHealth.HasValue) FleeIfLowHealth = lower.FleeIfLowHealth;
             if (!StanceCycling.HasValue) StanceCycling = lower.StanceCycling;
+            if (!LoggingMode.HasValue) LoggingMode = lower.LoggingMode;
             if (!Threat.HasValue) Threat = lower.Threat;
             if (!Fearless.HasValue) Fearless = lower.Fearless;
             if (!Baby.HasValue) Baby = lower.Baby;
@@ -169,7 +178,7 @@ namespace CreatureControl
             !Threat.HasValue && !Fearless.HasValue && !Baby.HasValue &&
             !RallyRadius.HasValue && !Solitary.HasValue && !Sight.HasValue && !AlwaysFlee.HasValue &&
             !SharesFear.HasValue &&
-            !StanceCycling.HasValue && !FactionId.HasValue &&
+            !StanceCycling.HasValue && !LoggingMode.HasValue && !FactionId.HasValue &&
             !FireFear.HasValue && !FireReact.HasValue && !FireBuffer.HasValue &&
             !StalkSeconds.HasValue && !StalkRadius.HasValue && !PounceRange.HasValue &&
             !PhaseExemptTamed.HasValue &&

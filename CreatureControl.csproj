@@ -66,6 +66,13 @@
     <Reference Include="0Harmony">
       <HintPath>$(BepInExCore)\0Harmony.dll</HintPath><Private>false</Private>
     </Reference>
+    <!-- TODO(verify path): Jotunn's plugin folder name depends on how Gale
+         extracted the Thunderstore package - it may be "Jotunn" or
+         "ValheimModding-Jotunn". Fix this HintPath if the build errors with
+         "could not find Jotunn.dll". -->
+    <Reference Include="Jotunn">
+      <HintPath>$(GaleProfile)\BepInEx\plugins\Jotunn\Jotunn.dll</HintPath><Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- Fail with one clear message rather than 200 "type not found" errors. -->
@@ -74,6 +81,8 @@
            Text="Can't find assembly_valheim.dll under &quot;$(ValheimManaged)&quot;. Edit ValheimManaged in CreatureControl.csproj." />
     <Error Condition="!Exists('$(BepInExCore)\BepInEx.dll')"
            Text="Can't find BepInEx.dll under &quot;$(BepInExCore)&quot;. Edit GaleProfile in CreatureControl.csproj." />
+    <Error Condition="!Exists('$(GaleProfile)\BepInEx\plugins\Jotunn\Jotunn.dll')"
+           Text="Can't find Jotunn.dll at the Reference's HintPath. Find the real path under $(GaleProfile)\BepInEx\plugins and fix the Jotunn Reference's HintPath in CreatureControl.csproj." />
   </Target>
 
   <!-- Drop the built mod straight into the profile's plugins folder. -->
