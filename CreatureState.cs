@@ -158,6 +158,7 @@ namespace CreatureControl
             {
                 _nextFearEval = Time.time + Plugin.FearInterval;
                 _scaredOf = target;
+                bool wasScared = _scared;
                 _scared = bolts
                           || (IsSolitary && SolitaryYields(target))
                           || Band.ShouldBackOff(this, target);
@@ -167,6 +168,13 @@ namespace CreatureControl
                 // expire on its own or a creature could run forever from a
                 // target that has long since wandered off.
                 if (_scared) _fleeUntil = Time.time + Plugin.FearInterval * 4f;
+
+                // Just now decided to run, and opted into telling its own kind.
+                // Only on the genuine edge - not every re-check while it is
+                // already fleeing - so a herd standing near a fire for minutes
+                // doesn't re-scan itself every couple of seconds.
+                if (_scared && !wasScared && SharesFear)
+                    FearAlert.Broadcast(this, target);
             }
 
             if (!_scared) { _chased = false; return false; }
@@ -494,6 +502,32 @@ namespace CreatureControl
         /// It DOES still answer a dinner bell - refusing to cooperate is not
         /// the same as refusing a free meal.</summary>
         public bool IsSolitary => Rule != null && Rule.Solitary == true;
+
+        /// <summary>Opts into the fear-alert herd system. Deliberately separate
+        /// from Band/rallying - this creature isn't weighing threat or joining
+        /// a fight, it's just taking a neighbour's word that something scary is
+        /// nearby.</summary>
+        public bool SharesFear => Rule != null && Rule.SharesFear == true;
+
+        /// <summary>True if this creature is already fleeing (or about to)
+        /// from this exact target, so FearAlert doesn't bother queuing it a
+        /// second alert it doesn't need.</summary>
+        public bool IsAlreadyScaredOf(Character target) => _scared && _scaredOf == target;
+
+        /// <summary>
+        /// Delivered by FearAlert once the reaction delay has elapsed. Forces
+        /// the same verdict WantsToFlee would reach on its own - this creature
+        /// isn't running its own danger-score arithmetic, it's simply taking
+        /// its neighbour's word for it, the way a real herd would.
+        /// </summary>
+        public void ReceiveFearAlert(Character target, float fleeSeconds)
+        {
+            if (target == null) return;
+            _scaredOf = target;
+            _scared = true;
+            _nextFearEval = Time.time + Plugin.FearInterval;
+            _fleeUntil = Time.time + fleeSeconds;
+        }
 
         /// <summary>How this creature reads a PLAYER. Anything with no rule of
         /// its own falls back to animal instinct, which is the safe default: it

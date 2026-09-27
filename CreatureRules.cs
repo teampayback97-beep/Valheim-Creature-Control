@@ -52,6 +52,11 @@ namespace CreatureControl
         /// as an enemy. Matched by name, never by suffix - 'Hatchling' is a
         /// grown drake, not a baby.</summary>
         public bool? Baby;
+        /// <summary>Opts into the herd fear-alert system (FearAlert.cs): the
+        /// moment this creature panics, nearby creatures of the SAME prefab
+        /// within Fear Alert Radius get told, after Fear Alert Delay. Separate
+        /// from Solitary/rallying - this is reflex, not threat-weighing.</summary>
+        public bool? SharesFear;
 
         // --- fire ---------------------------------------------------------------
         // Instinctive, independent of the fear system: nothing here is weighing
@@ -148,6 +153,7 @@ namespace CreatureControl
             if (!Solitary.HasValue) Solitary = lower.Solitary;
             if (!Sight.HasValue) Sight = lower.Sight;
             if (!AlwaysFlee.HasValue) AlwaysFlee = lower.AlwaysFlee;
+            if (!SharesFear.HasValue) SharesFear = lower.SharesFear;
             // FactionId is deliberately NOT inherited: a [@Faction] section
             // describes creatures already in that faction, it does not move
             // anything into it.
@@ -162,6 +168,7 @@ namespace CreatureControl
             !FleeIfNotAlerted.HasValue &&
             !Threat.HasValue && !Fearless.HasValue && !Baby.HasValue &&
             !RallyRadius.HasValue && !Solitary.HasValue && !Sight.HasValue && !AlwaysFlee.HasValue &&
+            !SharesFear.HasValue &&
             !StanceCycling.HasValue && !FactionId.HasValue &&
             !FireFear.HasValue && !FireReact.HasValue && !FireBuffer.HasValue &&
             !StalkSeconds.HasValue && !StalkRadius.HasValue && !PounceRange.HasValue &&

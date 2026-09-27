@@ -161,8 +161,18 @@ namespace CreatureControl
         static FireTier Classify(EffectArea a, float radius)
         {
             var t = a.transform;
+            Character creatureHolder = null;
             for (int depth = 0; depth < 6 && t != null; depth++, t = t.parent)
             {
+                // A fire held by ANY creature - player, goblin, NPC - is a hand
+                // torch regardless of what the prop is named. Checked once per
+                // ancestor rather than short-circuiting the walk immediately, so
+                // a name-table hit (which can still win outright, e.g. a
+                // creature standing next to a bonfire prop parented oddly) is
+                // never shadowed by a coincidental Character further up.
+                if (creatureHolder == null)
+                    creatureHolder = t.gameObject.GetComponent<Character>();
+
                 var raw = t.gameObject.name;
                 if (string.IsNullOrEmpty(raw)) continue;
 
@@ -179,6 +189,15 @@ namespace CreatureControl
                     return tier;
                 }
                 _byName[raw] = FireTier.None;
+            }
+
+            if (creatureHolder != null)
+            {
+                if (Plugin.Verbose)
+                    Plugin.Log.LogInfo(
+                        $"[fire] {CreatureRules.CleanName(creatureHolder.name)} is holding a " +
+                        "fire source - treated as a torch.");
+                return FireTier.Torch;
             }
 
             var guess = ByRadius(radius);

@@ -38,6 +38,8 @@ namespace CreatureControl
         static ConfigEntry<bool> _callHelp;
         static ConfigEntry<float> _helpRadius;
         static ConfigEntry<float> _rallySeconds;
+        static ConfigEntry<float> _fearAlertRadius;
+        static ConfigEntry<float> _fearAlertDelay;
         static ConfigEntry<bool> _dinnerBell;
         static ConfigEntry<float> _armorDiv;
         static ConfigEntry<float> _weaponDiv;
@@ -119,6 +121,13 @@ namespace CreatureControl
         public static bool CallForHelpEnabled => _callHelp == null || _callHelp.Value;
         public static float HelpRadius => _helpRadius == null ? 25f : _helpRadius.Value;
         public static float RallySeconds => _rallySeconds == null ? 5f : _rallySeconds.Value;
+
+        /// <summary>How far a panicking creature's alert reaches. Only creatures
+        /// given sharesFear = true in the config send or receive one.</summary>
+        public static float FearAlertRadius => _fearAlertRadius == null ? 15f : _fearAlertRadius.Value;
+        /// <summary>The reaction-time delay before a nearby creature acts on
+        /// someone else's fear instead of instantly knowing about it.</summary>
+        public static float FearAlertDelay => _fearAlertDelay == null ? 0.5f : _fearAlertDelay.Value;
         public static int BandMaxSize => _bandSize == null ? 16 : _bandSize.Value;
         public static int BandMaxHops => _bandHops == null ? 3 : _bandHops.Value;
         public static float BandMaxSpread => _bandSpread == null ? 60f : _bandSpread.Value;
@@ -223,6 +232,18 @@ namespace CreatureControl
                 "A cry for help carries to everything, not just friends. Predators that hunt " +
                 "the caller hear it too and come for the caller instead of coming to its aid. " +
                 "Solitary hunters answer this even though they never join a rally.");
+            _fearAlertRadius = Config.Bind("Fear", "Fear Alert Radius", 15f,
+                new ConfigDescription(
+                    "How far a panicking creature's alert reaches. Only creatures given " +
+                    "sharesFear = true in the config send or receive one - currently just Deer, " +
+                    "as a test case.",
+                    new AcceptableValueRange<float>(1f, 60f)));
+            _fearAlertDelay = Config.Bind("Fear", "Fear Alert Delay", 0.5f,
+                new ConfigDescription(
+                    "How long a nearby creature takes to react to someone else's panic. A real " +
+                    "animal notices its herd bolting and reacts a beat later, rather than " +
+                    "instantly knowing there is danger.",
+                    new AcceptableValueRange<float>(0f, 5f)));
 
             _armorDiv = Config.Bind("Danger", "Armor Divisor", 100f,
                 new ConfigDescription(
@@ -466,6 +487,10 @@ namespace CreatureControl
             // ticks a day when it actually turns over.
             if (PhaseEnabled) Phase.Tick();
 
+            // Delivers any queued herd panic alerts whose reaction delay has
+            // elapsed. A handful of entries at most, so this costs nothing.
+            FearAlert.Tick();
+
             // Cheap: returns immediately once written, and before that it only
             // tests whether ZNetScene has finished registering prefabs.
             Catalog.MaybeWrite(_cfgDir);
@@ -544,6 +569,18 @@ namespace CreatureControl
                 "A cry for help carries to everything, not just friends. Predators that hunt " +
                 "the caller hear it too and come for the caller instead of coming to its aid. " +
                 "Solitary hunters answer this even though they never join a rally.");
+            _fearAlertRadius = Config.Bind("Fear", "Fear Alert Radius", 15f,
+                new ConfigDescription(
+                    "How far a panicking creature's alert reaches. Only creatures given " +
+                    "sharesFear = true in the config send or receive one - currently just Deer, " +
+                    "as a test case.",
+                    new AcceptableValueRange<float>(1f, 60f)));
+            _fearAlertDelay = Config.Bind("Fear", "Fear Alert Delay", 0.5f,
+                new ConfigDescription(
+                    "How long a nearby creature takes to react to someone else's panic. A real " +
+                    "animal notices its herd bolting and reacts a beat later, rather than " +
+                    "instantly knowing there is danger.",
+                    new AcceptableValueRange<float>(0f, 5f)));
 
             _armorDiv = Config.Bind("Danger", "Armor Divisor", 100f,
                 new ConfigDescription(
@@ -702,6 +739,7 @@ namespace CreatureControl
             try { if (_harmony != null) _harmony.UnpatchSelf(); } catch { }
             CreatureState.ClearRegistry();
             FireAversion.Reset();
+            FearAlert.Reset();
             Phase.Forget();
         }
     }

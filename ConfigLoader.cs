@@ -391,6 +391,11 @@ namespace CreatureControl
                         else Warn(l, $"expected true/false, got '{l.Value}'");
                         break;
 
+                    case "sharesfear":
+                        if (bool.TryParse(l.Value, out var shf)) rule.SharesFear = shf;
+                        else Warn(l, $"expected true/false, got '{l.Value}'");
+                        break;
+
                     // One key, two spellings of the same idea: a tier names the
                     // weakest fire that turns this creature, and the old
                     // true/false still works - true meaning "even a torch".
