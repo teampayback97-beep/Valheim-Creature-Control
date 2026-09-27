@@ -456,6 +456,8 @@ namespace CreatureControl
             bool added = inv.AddItem(prefab.name, st.CarryCount, 1, 0, 0L, "");
             if (!added) return;   // chest is full; keep the stack, retry next tick
 
+            container.Save();
+
             if (Plugin.Verbose)
                 Plugin.Log.LogInfo($"[logging] {st.Prefab} deposited {st.CarryCount}x {st.CarryItem}.");
 

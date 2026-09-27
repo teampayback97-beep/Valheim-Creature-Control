@@ -88,7 +88,13 @@ namespace CreatureControl
                         "double-check it isn't carrying its own ward behaviour into the leash.");
 
                 var piece = new Jotunn.Entities.CustomPiece(prefab, fixReference: true, config);
-                Jotunn.Managers.PieceManager.Instance.AddPiece(piece);
+                if (!Jotunn.Managers.PieceManager.Instance.AddPiece(piece))
+                {
+                    Plugin.Log.LogError(
+                        $"PieceManager rejected '{LeashPrefabName}' (invalid piece, or the name " +
+                        "is already taken) - logging will have nothing to bind to.");
+                    return;
+                }
 
                 // Tames damaging player-built pieces is already blocked
                 // generically by StructureGuard.cs (Plugin.TamesSpareStructures
