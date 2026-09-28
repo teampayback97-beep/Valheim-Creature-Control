@@ -129,6 +129,25 @@ namespace CreatureControl
             t = FireTier.None; return false;
         }
 
+        /// <summary>Vanilla's own resistance enum, spelled the way a config
+        /// author would type it. Case-insensitive, same idea as TryFireTier.</summary>
+        static bool TryDamageModifier(string v, out HitData.DamageModifier m)
+        {
+            switch ((v ?? "").Trim().ToLowerInvariant())
+            {
+                case "normal": m = HitData.DamageModifier.Normal; return true;
+                case "resistant": m = HitData.DamageModifier.Resistant; return true;
+                case "veryresistant": case "very resistant": m = HitData.DamageModifier.VeryResistant; return true;
+                case "slightlyresistant": case "slightly resistant": m = HitData.DamageModifier.SlightlyResistant; return true;
+                case "weak": m = HitData.DamageModifier.Weak; return true;
+                case "veryweak": case "very weak": m = HitData.DamageModifier.VeryWeak; return true;
+                case "slightlyweak": case "slightly weak": m = HitData.DamageModifier.SlightlyWeak; return true;
+                case "immune": m = HitData.DamageModifier.Immune; return true;
+                case "ignore": m = HitData.DamageModifier.Ignore; return true;
+            }
+            m = HitData.DamageModifier.Normal; return false;
+        }
+
         static bool F(string v, out float f) =>
             float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out f);
 
@@ -488,6 +507,68 @@ namespace CreatureControl
                         else Warn(l, $"expected true/false, got '{l.Value}'");
                         break;
 
+                    case "enragewhenoutnumbered":
+                        if (bool.TryParse(l.Value, out var ewo)) rule.EnrageWhenOutnumbered = ewo;
+                        else Warn(l, $"expected true/false, got '{l.Value}'");
+                        break;
+
+                    case "enragevssamekind":
+                        if (bool.TryParse(l.Value, out var evsk)) rule.EnrageVsSameKind = evsk;
+                        else Warn(l, $"expected true/false, got '{l.Value}'");
+                        break;
+
+                    case "enragethreatbonusmin":
+                        if (F(l.Value, out var etbmin)) rule.EnrageThreatBonusMin = etbmin;
+                        else WarnNum(l);
+                        break;
+
+                    case "enragethreatbonusmax":
+                        if (F(l.Value, out var etbmax)) rule.EnrageThreatBonusMax = etbmax;
+                        else WarnNum(l);
+                        break;
+
+                    case "enragephysicalresist":
+                        if (TryDamageModifier(l.Value, out var epr)) rule.EnragePhysicalResist = epr;
+                        else Warn(l, $"expected normal/resistant/veryresistant/slightlyresistant/immune/ignore, got '{l.Value}'");
+                        break;
+
+                    case "enragepoisonimmune":
+                        if (bool.TryParse(l.Value, out var epi)) rule.EnragePoisonImmune = epi;
+                        else Warn(l, $"expected true/false, got '{l.Value}'");
+                        break;
+
+                    case "enragedamagemult":
+                        if (F(l.Value, out var edm))
+                        {
+                            if (edm <= 0f) Warn(l, $"enrageDamageMult must be above 0; got {edm}");
+                            else rule.EnrageDamageMult = edm;
+                        }
+                        else WarnNum(l);
+                        break;
+
+                    case "minattackinterval":
+                        if (F(l.Value, out var mai))
+                        {
+                            if (mai < 0f) Warn(l, $"minAttackInterval cannot be negative; got {mai}");
+                            else rule.MinAttackInterval = mai;
+                        }
+                        else WarnNum(l);
+                        break;
+
+                    case "circletargetinterval":
+                        if (F(l.Value, out var cti))
+                        {
+                            if (cti < 0f) Warn(l, $"circleTargetInterval cannot be negative; got {cti}");
+                            else rule.CircleTargetInterval = cti;
+                        }
+                        else WarnNum(l);
+                        break;
+
+                    case "circulatewhilecharging":
+                        if (bool.TryParse(l.Value, out var cwc)) rule.CirculateWhileCharging = cwc;
+                        else Warn(l, $"expected true/false, got '{l.Value}'");
+                        break;
+
                     default:
                         Warn(l, $"unknown key '{l.Key}'");
                         break;
@@ -582,6 +663,29 @@ namespace CreatureControl
 #                      creature into a totem-bound job rather than just gating
 #                      a stance the player already controls.
 #
+#  ENRAGE - reactive, not scheduled. A creature reads the exact same
+#  outnumbered/not-outnumbered verdict the fear system would flee on, whether
+#  or not fear ever applies to it at all (Fearless creatures included - this
+#  never touches whether or how anything flees).
+#    enrageWhenOutnumbered   true | false - opts in
+#    enrageVsSameKind        true | false - also enrages against its own
+#                            prefab regardless of the numbers (territorial)
+#    enrageThreatBonusMin/Max   how much MORE dangerous it reads to everything
+#                            else while enraged, randomised once per trigger
+#    enragePhysicalResist    Normal|Resistant|VeryResistant|SlightlyResistant|
+#                            Weak|VeryWeak|SlightlyWeak|Immune|Ignore
+#                            - applied to blunt/slash/pierce while enraged
+#    enragePoisonImmune      true | false
+#    enrageDamageMult        multiplier on damage DEALT while enraged
+#
+#  AGGRESSION PACING - always on, not tied to enrage. Vanilla periodically
+#  disengages a creature to circle its target and/or wanders it around
+#  between attacks; these override that outright.
+#    minAttackInterval       floor between attacks (seconds)
+#    circleTargetInterval    0 disables vanilla's forced disengage-and-circle
+#    circulateWhileCharging  true | false - wander instead of holding still
+#                            while the attack itself is on cooldown
+#
 #  A TERRITORIAL CREATURE is just a small radius plus Aggressive:
 #    detection range = how far it cares, stance = what it does when it cares.
 #
@@ -592,6 +696,16 @@ namespace CreatureControl
 tamedBehavior  = Neutral
 tamedViewRange = 15
 tamedHearRange = 15
+minAttackInterval      = 0.2
+circleTargetInterval   = 0
+circulateWhileCharging = false
+enrageWhenOutnumbered  = true
+enrageVsSameKind       = true
+enrageThreatBonusMin   = 3
+enrageThreatBonusMax   = 8
+enragePhysicalResist   = Resistant
+enragePoisonImmune     = true
+enrageDamageMult       = 1.3
 
 [Troll]
 loggingMode = true

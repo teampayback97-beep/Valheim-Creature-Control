@@ -247,6 +247,17 @@ namespace CreatureControl
             // worse than not having it.
             if (st.FearBroken) return true;
 
+            var currentTarget = __instance.GetTargetCreature();
+
+            // Threat assessment is available to every creature, fearless or
+            // not - this reads the exact same Band verdict WantsToFlee would
+            // flee on, it just never feeds a Fearless creature into that
+            // decision. Nothing about the fear/flee path below is touched by
+            // this, and it never takes the tick - purely a stat/resistance
+            // effect layered on top of whatever else is driving movement.
+            if (Plugin.EnrageEnabled && st.EnrageConfigured)
+                st.ReevaluateEnrage(currentTarget);
+
             // Fire is NOT handled here any more. Vanilla runs its own fire
             // branch inside MonsterAI.UpdateAI, further down this same method,
             // and Patch_BaseAI_AvoidFire below reshapes that instead - which
@@ -260,11 +271,10 @@ namespace CreatureControl
             // below for the logging branch this falls through to.
             if (Plugin.FearEnabled && st.FearApplies)
             {
-                var target = __instance.GetTargetCreature();
-                if (target == null) { st.ForgetFear(); st.ForgetStalk(); }
+                if (currentTarget == null) { st.ForgetFear(); st.ForgetStalk(); }
                 else
                 {
-                    if (st.WantsToFlee(target, out var from))
+                    if (st.WantsToFlee(currentTarget, out var from))
                         return DriveAwayFrom(__instance, st, dt, from, ref __result);
 
                     // Not running. Is it working up to it? A hunter that walks
@@ -272,8 +282,8 @@ namespace CreatureControl
                     // picking a target it holds its distance and circles instead
                     // of closing. Runs after the fear check on purpose: something
                     // that has decided to leave is not also circling.
-                    if (st.WantsToStalk(target) && AiMotion.CanOrbit)
-                        return Circle(__instance, st, dt, target, ref __result);
+                    if (st.WantsToStalk(currentTarget) && AiMotion.CanOrbit)
+                        return Circle(__instance, st, dt, currentTarget, ref __result);
                 }
             }
 

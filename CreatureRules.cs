@@ -108,6 +108,48 @@ namespace CreatureControl
 
         public bool? StanceCycling;
 
+        // --- enrage ----------------------------------------------------------
+        // Reactive, not scheduled - unlike Day/Night this is decided by a live
+        // Band.ShouldBackOff verdict, read directly rather than through
+        // WantsToFlee. That is deliberate: WantsToFlee (and therefore the fear
+        // system) is completely untouched by any of this, which is what lets a
+        // Fearless creature use it at all - Fearless is only ever a bar on
+        // fleeing, never on knowing the numbers.
+        /// <summary>Opts a creature into becoming Enraged whenever its own
+        /// band would otherwise be judged outnumbered.</summary>
+        public bool? EnrageWhenOutnumbered;
+        /// <summary>Also enrages against an opponent of the exact same
+        /// prefab, regardless of the numbers - two of the same apex predator
+        /// meeting is a territorial fight, not an arithmetic one.</summary>
+        public bool? EnrageVsSameKind;
+        /// <summary>Threat bonus while enraged, randomised once per trigger
+        /// between these two - makes the creature read as more dangerous to
+        /// everything ELSE weighing a fight against it, not just harder to
+        /// kill.</summary>
+        public float? EnrageThreatBonusMin;
+        public float? EnrageThreatBonusMax;
+        /// <summary>Resistance level applied to blunt/slash/pierce while
+        /// enraged (see HitData.DamageModifier - Resistant, VeryResistant,
+        /// etc). Null leaves physical resistance untouched.</summary>
+        public HitData.DamageModifier? EnragePhysicalResist;
+        public bool? EnragePoisonImmune;
+        /// <summary>Multiplier on damage DEALT while enraged. Takes over
+        /// from any Day/Night DamageMult for as long as it lasts.</summary>
+        public float? EnrageDamageMult;
+
+        // --- always-on aggression pacing --------------------------------------
+        // Not a phase, not an enrage trigger - a flat replacement for how
+        // readily this creature re-engages after attacking. Vanilla's own
+        // MonsterAI periodically disengages a creature to circle its target
+        // (m_circleTargetInterval) and/or wanders around it between attacks
+        // (m_circulateWhileCharging) - fine for most wildlife, but not for
+        // something meant to fight like it never lets up.
+        public float? MinAttackInterval;
+        /// <summary>0 disables vanilla's periodic forced disengage-and-circle
+        /// outright - the check it drives is gated on this being > 0.</summary>
+        public float? CircleTargetInterval;
+        public bool? CirculateWhileCharging;
+
         // --- troll logging ---------------------------------------------------
         /// <summary>Config permission for the logging toggle. Unlike
         /// StanceCycling this defaults to OFF (null / false both block) - the
@@ -134,6 +176,16 @@ namespace CreatureControl
             if (!FleeIfLowHealth.HasValue) FleeIfLowHealth = lower.FleeIfLowHealth;
             if (!StanceCycling.HasValue) StanceCycling = lower.StanceCycling;
             if (!LoggingMode.HasValue) LoggingMode = lower.LoggingMode;
+            if (!EnrageWhenOutnumbered.HasValue) EnrageWhenOutnumbered = lower.EnrageWhenOutnumbered;
+            if (!EnrageVsSameKind.HasValue) EnrageVsSameKind = lower.EnrageVsSameKind;
+            if (!EnrageThreatBonusMin.HasValue) EnrageThreatBonusMin = lower.EnrageThreatBonusMin;
+            if (!EnrageThreatBonusMax.HasValue) EnrageThreatBonusMax = lower.EnrageThreatBonusMax;
+            if (!EnragePhysicalResist.HasValue) EnragePhysicalResist = lower.EnragePhysicalResist;
+            if (!EnragePoisonImmune.HasValue) EnragePoisonImmune = lower.EnragePoisonImmune;
+            if (!EnrageDamageMult.HasValue) EnrageDamageMult = lower.EnrageDamageMult;
+            if (!MinAttackInterval.HasValue) MinAttackInterval = lower.MinAttackInterval;
+            if (!CircleTargetInterval.HasValue) CircleTargetInterval = lower.CircleTargetInterval;
+            if (!CirculateWhileCharging.HasValue) CirculateWhileCharging = lower.CirculateWhileCharging;
             if (!Threat.HasValue) Threat = lower.Threat;
             if (!Fearless.HasValue) Fearless = lower.Fearless;
             if (!Baby.HasValue) Baby = lower.Baby;
@@ -179,6 +231,10 @@ namespace CreatureControl
             !RallyRadius.HasValue && !Solitary.HasValue && !Sight.HasValue && !AlwaysFlee.HasValue &&
             !SharesFear.HasValue &&
             !StanceCycling.HasValue && !LoggingMode.HasValue && !FactionId.HasValue &&
+            !EnrageWhenOutnumbered.HasValue && !EnrageVsSameKind.HasValue &&
+            !EnrageThreatBonusMin.HasValue && !EnrageThreatBonusMax.HasValue &&
+            !EnragePhysicalResist.HasValue && !EnragePoisonImmune.HasValue && !EnrageDamageMult.HasValue &&
+            !MinAttackInterval.HasValue && !CircleTargetInterval.HasValue && !CirculateWhileCharging.HasValue &&
             !FireFear.HasValue && !FireReact.HasValue && !FireBuffer.HasValue &&
             !StalkSeconds.HasValue && !StalkRadius.HasValue && !PounceRange.HasValue &&
             !PhaseExemptTamed.HasValue &&

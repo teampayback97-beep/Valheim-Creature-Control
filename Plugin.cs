@@ -26,6 +26,8 @@ namespace CreatureControl
         static ConfigEntry<float> _grudge;
         static ConfigEntry<KeyboardShortcut> _cycleKey;
 
+        static ConfigEntry<bool> _enrageOn;
+
         static ConfigEntry<bool> _fearOn;
         static ConfigEntry<float> _fearRadius;
         static ConfigEntry<float> _fearInterval;
@@ -86,6 +88,12 @@ namespace CreatureControl
         public static float GrudgeSeconds => _grudge == null ? 30f : _grudge.Value;
         public static string CycleKeyLabel =>
             _cycleKey == null ? "L.Alt + X" : _cycleKey.Value.ToString();
+
+        /// <summary>Master switch for the enrage mechanic. Reuses
+        /// FearInterval for its own re-check cadence rather than adding a
+        /// second timer - it's the same "how often does a creature
+        /// reconsider" question the fear system already answers.</summary>
+        public static bool EnrageEnabled => _enrageOn == null || _enrageOn.Value;
 
         public static bool FearEnabled => _fearOn == null || _fearOn.Value;
         public static float FearRadius => _fearRadius == null ? 20f : _fearRadius.Value;
@@ -194,6 +202,12 @@ namespace CreatureControl
                 new ConfigDescription(
                     "How many seconds a Neutral creature stays angry at whatever hurt it before settling down.",
                     new AcceptableValueRange<float>(1f, 600f)));
+
+            _enrageOn = Config.Bind("Enrage", "Enable Enrage", true,
+                "Master switch for the enrage mechanic - a creature reads the same " +
+                "outnumbered/not-outnumbered verdict the fear system would flee on, whether or " +
+                "not fear ever applies to it (Fearless creatures included). Never changes " +
+                "whether or how anything flees; see enrageWhenOutnumbered per creature.");
 
             _fearOn = Config.Bind("Fear", "Enable Fear", true,
                 "Creatures weigh their side against yours before starting a fight. Never blocks " +

@@ -69,6 +69,16 @@ namespace CreatureControl
         /// another mod is repositioning the creature will snap it back.</summary>
         bool _huntApplied;
 
+        /// <summary>Vanilla's own attack-pacing knobs: a periodic forced
+        /// disengage-and-circle, and a wander-instead-of-holding-still while
+        /// the weapon is on cooldown. Neither is a phase or an enrage effect -
+        /// a flat, always-on replacement for how readily this creature
+        /// re-engages, same capture/apply/restore shape as everything else
+        /// here.</summary>
+        float _origMinAttackInterval, _origCircleTargetInterval;
+        bool _origCirculateWhileCharging;
+        bool _aggressionApplied;
+
         bool _lastTamed, _tamedKnown;
 
         /// <summary>
@@ -361,9 +371,16 @@ namespace CreatureControl
             get
             {
                 var ph = ActivePhase;
-                if (ph != null && ph.Threat.HasValue) return ph.Threat.Value;
-                if (Rule != null && Rule.Threat.HasValue) return Rule.Threat.Value;
-                return Plugin.DefaultThreat;
+                float baseValue =
+                    (ph != null && ph.Threat.HasValue) ? ph.Threat.Value
+                    : (Rule != null && Rule.Threat.HasValue) ? Rule.Threat.Value
+                    : Plugin.DefaultThreat;
+
+                // Enrage is a strict add-on, never a replacement: even a
+                // creature with a Day/Night threat override reads as more
+                // dangerous still while enraged, on top of whatever the
+                // clock already says about it.
+                return baseValue + (_enraged ? _enrageThreatBonus : 0f);
             }
         }
 
@@ -385,11 +402,124 @@ namespace CreatureControl
         {
             get
             {
+                // Enrage takes over from the phase multiplier for as long as
+                // it lasts, rather than stacking with it - two multipliers
+                // compounding on top of each other would be very easy to
+                // overtune by accident.
+                if (_enraged && Rule != null && Rule.EnrageDamageMult.HasValue)
+                    return Rule.EnrageDamageMult.Value;
+
                 var ph = ActivePhase;
                 if (ph != null && ph.DamageMult.HasValue && ph.DamageMult.Value > 0f)
                     return ph.DamageMult.Value;
                 return 1f;
             }
+        }
+
+        // ---- enrage ---------------------------------------------------------------
+        // Reactive, not scheduled - unlike ActivePhase (Phase.IsNight), this
+        // is decided by a live Band.ShouldBackOff verdict read DIRECTLY,
+        // never through WantsToFlee. WantsToFlee - and therefore the whole
+        // fear system, Fearless included - is untouched by any of this; that
+        // is precisely what lets a Fearless creature use it at all.
+        bool _enraged;
+        float _nextEnrageEval;
+        float _enrageThreatBonus;
+        HitData.DamageModifiers _origDamageMods;
+        bool _enrageDamageModsApplied;
+
+        public bool IsEnraged => _enraged;
+
+        /// <summary>Whether this creature has opted into the mechanic at
+        /// all. Checked by the caller before ReevaluateEnrage is ever
+        /// worth invoking.</summary>
+        public bool EnrageConfigured => Rule != null && Rule.EnrageWhenOutnumbered == true;
+
+        /// <summary>
+        /// Re-evaluated on the same cadence as the fear system (re-using
+        /// Plugin.FearInterval rather than adding a second timer), but reads
+        /// Band's verdict directly instead of going through WantsToFlee -
+        /// which is the one line that makes this reachable for a Fearless
+        /// creature. Band.ShouldBackOff's own side effects (rallying allies,
+        /// chaining aggro) still fire exactly as they would for anything
+        /// else asking it the same question - nothing about Band.cs itself
+        /// is touched or special-cased here.
+        /// </summary>
+        public void ReevaluateEnrage(Character target)
+        {
+            if (!EnrageConfigured || Chr == null || target == null) { SetEnraged(false); return; }
+            if (Time.time < _nextEnrageEval) return;
+            _nextEnrageEval = Time.time + Plugin.FearInterval;
+
+            bool outnumbered = Band.ShouldBackOff(this, target);
+
+            bool sameKind = Rule.EnrageVsSameKind == true &&
+                            string.Equals(CreatureRules.CleanName(target.gameObject.name), Prefab,
+                                          System.StringComparison.OrdinalIgnoreCase);
+
+            SetEnraged(outnumbered || sameKind);
+        }
+
+        void SetEnraged(bool on)
+        {
+            if (_enraged == on) return;
+            _enraged = on;
+            if (on) ApplyEnrageEffects(); else RemoveEnrageEffects();
+        }
+
+        void ApplyEnrageEffects()
+        {
+            if (Chr == null || Rule == null) return;
+
+            if (!_enrageDamageModsApplied)
+            {
+                _origDamageMods = Chr.m_damageModifiers.Clone();
+                _enrageDamageModsApplied = true;
+            }
+
+            var mods = _origDamageMods.Clone();
+            if (Rule.EnragePhysicalResist.HasValue)
+            {
+                var r = Rule.EnragePhysicalResist.Value;
+                mods.m_blunt = r;
+                mods.m_slash = r;
+                mods.m_pierce = r;
+            }
+            if (Rule.EnragePoisonImmune == true) mods.m_poison = HitData.DamageModifier.Immune;
+            Chr.m_damageModifiers = mods;
+
+            float lo = Rule.EnrageThreatBonusMin ?? 3f;
+            float hi = Rule.EnrageThreatBonusMax ?? 8f;
+            if (hi < lo) hi = lo;
+            _enrageThreatBonus = Random.Range(lo, hi);
+
+            EnrageCue.Play(this);
+
+            if (Plugin.Verbose)
+                Plugin.Log.LogInfo(
+                    $"[CC enrage] {Prefab} is ENRAGED (+{_enrageThreatBonus:0.#} threat).");
+        }
+
+        void RemoveEnrageEffects()
+        {
+            if (_enrageDamageModsApplied && Chr != null)
+            {
+                Chr.m_damageModifiers = _origDamageMods;
+                _enrageDamageModsApplied = false;
+            }
+            _enrageThreatBonus = 0f;
+
+            if (Plugin.Verbose)
+                Plugin.Log.LogInfo($"[CC enrage] {Prefab} calms down.");
+        }
+
+        /// <summary>Called from RestoreOriginals - if the rule that used to
+        /// enrage this creature is gone entirely, its resistances shouldn't
+        /// stay stuck on.</summary>
+        void RestoreEnrage()
+        {
+            _enraged = false;
+            RemoveEnrageEffects();
         }
 
         // ---- stalking -----------------------------------------------------------
@@ -892,6 +1022,9 @@ namespace CreatureControl
                 _origMaxChase = Mai.m_maxChaseDistance;
                 _origFleeLowHealth = Mai.m_fleeIfLowHealth;
                 _origFleeIfNotAlerted = Mai.m_fleeIfNotAlerted;
+                _origMinAttackInterval = Mai.m_minAttackInterval;
+                _origCircleTargetInterval = Mai.m_circleTargetInterval;
+                _origCirculateWhileCharging = Mai.m_circulateWhileCharging;
             }
         }
 
@@ -923,7 +1056,16 @@ namespace CreatureControl
                     Ai.SetHuntPlayer(_origHuntPlayer);
                     _huntApplied = false;
                 }
+                // Only undo the pacing overrides if we were the ones who set them.
+                if (_aggressionApplied)
+                {
+                    Mai.m_minAttackInterval = _origMinAttackInterval;
+                    Mai.m_circleTargetInterval = _origCircleTargetInterval;
+                    Mai.m_circulateWhileCharging = _origCirculateWhileCharging;
+                    _aggressionApplied = false;
+                }
             }
+            RestoreEnrage();
             if (_factionApplied && Chr != null)
             {
                 Chr.m_faction = _origFaction;
@@ -1007,6 +1149,27 @@ namespace CreatureControl
                         : (Rule.MaxChaseDistance ?? _origMaxChase);
                 Mai.m_fleeIfLowHealth = Rule.FleeIfLowHealth ?? _origFleeLowHealth;
                 Mai.m_fleeIfNotAlerted = Rule.FleeIfNotAlerted ?? _origFleeIfNotAlerted;
+
+                // Attack-pacing overrides - written ONLY while the config has
+                // an opinion about at least one of them, same reasoning as
+                // every other "only while we actually want it" block here.
+                bool wantAggression = Rule.MinAttackInterval.HasValue ||
+                                      Rule.CircleTargetInterval.HasValue ||
+                                      Rule.CirculateWhileCharging.HasValue;
+                if (wantAggression)
+                {
+                    Mai.m_minAttackInterval = Rule.MinAttackInterval ?? _origMinAttackInterval;
+                    Mai.m_circleTargetInterval = Rule.CircleTargetInterval ?? _origCircleTargetInterval;
+                    Mai.m_circulateWhileCharging = Rule.CirculateWhileCharging ?? _origCirculateWhileCharging;
+                    _aggressionApplied = true;
+                }
+                else if (_aggressionApplied)
+                {
+                    Mai.m_minAttackInterval = _origMinAttackInterval;
+                    Mai.m_circleTargetInterval = _origCircleTargetInterval;
+                    Mai.m_circulateWhileCharging = _origCirculateWhileCharging;
+                    _aggressionApplied = false;
+                }
 
                 // m_enableHuntPlayer is only read in MonsterAI.Awake, so the
                 // flag alone would do nothing to a creature already spawned;
