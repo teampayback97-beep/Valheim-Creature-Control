@@ -444,6 +444,18 @@ namespace CreatureControl
         HitData.DamageModifiers _origDamageMods;
         bool _enrageDamageModsApplied;
 
+        // The taunt cue rears the creature onto its hind legs - a real
+        // animation, which means a real window where it cannot attack or
+        // otherwise defend itself. Without this, that opening beat is the
+        // one moment "enraged" makes a creature MORE vulnerable rather than
+        // less. Covers the cue, not the whole bout.
+        float _enrageInvincibleUntil;
+        const float EnrageInvincibleSeconds = 2.5f;
+
+        /// <summary>Checked by a Harmony prefix on Character.Damage - true
+        /// for a few seconds starting the instant a bout triggers.</summary>
+        public bool IsEnrageInvincible => Time.time < _enrageInvincibleUntil;
+
         public bool IsEnraged => _enraged;
 
         /// <summary>Whether this creature has opted into the mechanic at
@@ -530,6 +542,7 @@ namespace CreatureControl
             Chr.m_damageModifiers = mods;
 
             _enrageThreatBonus = Rule.EnrageThreatBonus ?? 3f;
+            _enrageInvincibleUntil = Time.time + EnrageInvincibleSeconds;
 
             EnrageCue.Play(this);
 

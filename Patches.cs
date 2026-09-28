@@ -19,6 +19,23 @@ namespace CreatureControl
         static void Postfix(AnimalAI __instance) => Setup.Attach(__instance);
     }
 
+    /// <summary>
+    /// A real invincibility window, not just a resistance tier - covers the
+    /// few seconds an enraging creature spends rearing up in its taunt
+    /// animation, unable to attack or otherwise defend itself. Character.
+    /// Damage is the public, non-virtual entry point that relays into the
+    /// RPC; skipping it here means the hit never even gets sent.
+    /// </summary>
+    [HarmonyPatch(typeof(Character), nameof(Character.Damage))]
+    static class Patch_Character_Damage_EnrageInvincible
+    {
+        static bool Prefix(Character __instance)
+        {
+            var st = CreatureState.For(__instance);
+            return st == null || !st.IsEnrageInvincible;
+        }
+    }
+
     internal static class Setup
     {
         /// <summary>
