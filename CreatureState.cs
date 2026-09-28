@@ -425,18 +425,22 @@ namespace CreatureControl
         bool _enraged;
         float _nextEnrageEval;
         float _enrageThreatBonus;
-        float _enrageHoldUntil;
+        float _enrageEndsAt;
+        float _enrageCooldownUntil;
 
-        // How long a genuine enrage holds once triggered, before the verdict
-        // is allowed to turn it back off. Without this, a threat tally that
-        // sits right on the boundary (a Fuling camp thinning out mid-fight)
-        // flips the verdict every single re-check - which re-fires the cue
-        // (an Any State animator transition) before the last one ever
-        // finishes, locking the creature into replaying its taunt instead of
-        // ever landing back in an attack. The resistances/threat/damage
-        // bonus hold for exactly as long as the cue does, so nothing reads
-        // as enraged for longer than it visibly looks enraged.
-        const float EnrageMinHoldSeconds = 6f;
+        // A bout, once triggered, runs its FULL course regardless of the
+        // verdict flipping back or the target going briefly null (both
+        // happen constantly mid-fight - a Fuling camp thinning out, or
+        // MonsterAI re-picking a target for one tick with nothing in hand).
+        // The old design re-checked every tick with no floor, so either of
+        // those instantly cleared the enrage again - visibly, the taunt cue
+        // (an Any State animator transition) re-firing before the last one
+        // finished, locking the creature into replaying it instead of ever
+        // landing back in an attack. A fixed duration plus a cooldown after
+        // it ends removes both failure modes at once: nothing can turn this
+        // off early, and nothing can re-trigger it before the cooldown is up.
+        const float EnrageDurationSeconds = 300f;
+        const float EnrageCooldownSeconds = 300f;
         HitData.DamageModifiers _origDamageMods;
         bool _enrageDamageModsApplied;
 
@@ -459,7 +463,28 @@ namespace CreatureControl
         /// </summary>
         public void ReevaluateEnrage(Character target)
         {
-            if (!EnrageConfigured || Chr == null || target == null) { SetEnraged(false); return; }
+            if (!EnrageConfigured || Chr == null)
+            {
+                if (_enraged) SetEnraged(false);
+                return;
+            }
+
+            // Already enraged: run out the clock. Nothing - not a null
+            // target, not the verdict flipping back - ends this early.
+            if (_enraged)
+            {
+                if (Time.time >= _enrageEndsAt)
+                {
+                    SetEnraged(false);
+                    _enrageCooldownUntil = Time.time + EnrageCooldownSeconds;
+                }
+                return;
+            }
+
+            // Not enraged, and still cooling down from the last bout.
+            if (Time.time < _enrageCooldownUntil) return;
+
+            if (target == null) return;
             if (Time.time < _nextEnrageEval) return;
             _nextEnrageEval = Time.time + Plugin.FearInterval;
 
@@ -469,19 +494,11 @@ namespace CreatureControl
                             string.Equals(CreatureRules.CleanName(target.gameObject.name), Prefab,
                                           System.StringComparison.OrdinalIgnoreCase);
 
-            bool wantsEnraged = outnumbered || sameKind;
-
-            if (wantsEnraged)
+            if (outnumbered || sameKind)
             {
                 SetEnraged(true);
-                _enrageHoldUntil = Time.time + EnrageMinHoldSeconds;
+                _enrageEndsAt = Time.time + EnrageDurationSeconds;
             }
-            else if (Time.time >= _enrageHoldUntil)
-            {
-                SetEnraged(false);
-            }
-            // else: the verdict just flipped back to calm, but the hold
-            // hasn't elapsed - stay enraged rather than flicker.
         }
 
         void SetEnraged(bool on)
