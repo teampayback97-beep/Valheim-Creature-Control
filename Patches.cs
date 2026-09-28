@@ -214,6 +214,34 @@ namespace CreatureControl
         }
     }
 
+    // ------------------------------------------------------------------- guard
+
+    /// <summary>
+    /// Widens what an Aggressive, guard-configured tame can sense. Vanilla
+    /// gates this one method behind view cone + line of sight + noise range -
+    /// fine for wildlife minding its own business, but it means a tame right
+    /// next to its owner never notices a threat sprinting in from outside
+    /// that cone. A Prefix rather than a Postfix so a hit here skips vanilla's
+    /// own raycast/angle work entirely rather than running it and overriding
+    /// the answer.
+    /// </summary>
+    [HarmonyPatch(typeof(BaseAI), nameof(BaseAI.CanSenseTarget), typeof(Character), typeof(bool))]
+    static class Patch_BaseAI_CanSenseTarget_Guard
+    {
+        static bool Prefix(BaseAI __instance, Character target, ref bool __result)
+        {
+            if (target == null) return true;
+
+            var st = CreatureState.For(__instance);
+            if (st == null || !st.GuardConfigured) return true;
+
+            if (!st.SensesGuardThreat(target)) return true;
+
+            __result = true;
+            return false;
+        }
+    }
+
     // ------------------------------------------------------------------- fear
 
     /// <summary>

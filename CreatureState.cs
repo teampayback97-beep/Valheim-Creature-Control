@@ -519,6 +519,42 @@ namespace CreatureControl
             RemoveEnrageEffects();
         }
 
+        // ---- guard (aggressive-stance early intervention) -----------------------
+        // Vanilla's own sensing (CanSenseTarget) only ever answers "can THIS
+        // creature, with ITS OWN view cone/hearing/noise-range, perceive that
+        // one" - so a tame standing right beside its owner never reacts to
+        // something sprinting in from outside that cone until it's already
+        // close, or has already hit someone. Guard answers a different
+        // question instead: "is that thing already committed to a fight with
+        // a player or with me" - and if so, and it's within GuardRadius, this
+        // creature is allowed to sense it regardless of its own senses.
+        // Aggressive-only, matching how the feature was asked for: Neutral
+        // keeps requiring an actual hit before it holds a grudge, exactly as
+        // it did before this existed. Nothing here changes IsEnemy, Band, or
+        // the fear/flee path - it only ever widens what counts as sensed.
+        public bool GuardConfigured =>
+            Rule != null && Rule.GuardRadius.HasValue && Rule.GuardRadius.Value > 0f &&
+            Chr != null && Chr.IsTamed() && _mode == BehaviorMode.Aggressive;
+
+        /// <summary>True if <paramref name="other"/> is a live threat this
+        /// creature should be allowed to sense early: within GuardRadius and
+        /// already targeting a player or this creature itself.</summary>
+        public bool SensesGuardThreat(Character other)
+        {
+            if (!GuardConfigured || other == null || Chr == null) return false;
+
+            float r = Rule.GuardRadius.Value;
+            if ((other.transform.position - Chr.transform.position).sqrMagnitude > r * r) return false;
+
+            var otherAi = other.GetBaseAI();
+            if (otherAi == null) return false;
+
+            var theirTarget = otherAi.GetTargetCreature();
+            if (theirTarget == null) return false;
+
+            return theirTarget == Chr || theirTarget is Player;
+        }
+
         // ---- stalking -----------------------------------------------------------
         // A hunter that walks straight at you is not stalking. This holds it at
         // a distance for a few seconds after it picks you out, circling, before

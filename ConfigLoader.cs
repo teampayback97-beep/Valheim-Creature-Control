@@ -568,6 +568,15 @@ namespace CreatureControl
                         else Warn(l, $"expected true/false, got '{l.Value}'");
                         break;
 
+                    case "guardradius":
+                        if (F(l.Value, out var gr))
+                        {
+                            if (gr < 0f) Warn(l, $"guardRadius cannot be negative; got {gr}");
+                            else rule.GuardRadius = gr;
+                        }
+                        else WarnNum(l);
+                        break;
+
                     default:
                         Warn(l, $"unknown key '{l.Key}'");
                         break;
@@ -684,6 +693,16 @@ namespace CreatureControl
 #    circleTargetInterval    0 disables vanilla's forced disengage-and-circle
 #    circulateWhileCharging  true | false - wander instead of holding still
 #                            while the attack itself is on cooldown
+#
+#  GUARD - Aggressive-stance only. Vanilla only notices an enemy through its
+#  own view cone, line of sight and hearing/noise range, so a tame standing
+#  right next to you does not react to something sprinting at you from
+#  outside that cone until it is already close or has already hit someone.
+#  guardRadius makes an Aggressive tame instead notice a THREAT: any hostile
+#  that is already targeting a player or this tame, anywhere within the
+#  radius, regardless of its own senses. Does nothing under Neutral or
+#  Passive - Neutral still requires an actual hit before it holds a grudge.
+#    guardRadius             metres. Unset/0 leaves vanilla sensing alone
 #
 #  A TERRITORIAL CREATURE is just a small radius plus Aggressive:
 #    detection range = how far it cares, stance = what it does when it cares.

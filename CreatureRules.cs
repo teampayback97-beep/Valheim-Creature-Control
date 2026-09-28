@@ -149,6 +149,20 @@ namespace CreatureControl
         public float? CircleTargetInterval;
         public bool? CirculateWhileCharging;
 
+        // --- guard (aggressive-stance early intervention) ---------------------
+        // Vanilla senses an enemy only through its own view cone/hearing/noise
+        // range - a tame standing beside its owner never notices something
+        // sprinting at them from outside that cone until it's already close or
+        // already landed a hit. This lets an Aggressive tame notice a THREAT
+        // instead: any hostile already targeting a player or this tame itself,
+        // anywhere within GuardRadius, regardless of line of sight or its own
+        // senses. Deliberately separate from WildView/TamedView/AlertRange -
+        // those still govern how this creature sees the rest of the world,
+        // this is purely "something has already committed to a fight near me."
+        // Opt-in (null = off) and Aggressive-only: Neutral keeps requiring an
+        // actual hit before it holds a grudge, exactly as before.
+        public float? GuardRadius;
+
         // --- troll logging ---------------------------------------------------
         /// <summary>Config permission for the logging toggle. Unlike
         /// StanceCycling this defaults to OFF (null / false both block) - the
@@ -184,6 +198,7 @@ namespace CreatureControl
             if (!MinAttackInterval.HasValue) MinAttackInterval = lower.MinAttackInterval;
             if (!CircleTargetInterval.HasValue) CircleTargetInterval = lower.CircleTargetInterval;
             if (!CirculateWhileCharging.HasValue) CirculateWhileCharging = lower.CirculateWhileCharging;
+            if (!GuardRadius.HasValue) GuardRadius = lower.GuardRadius;
             if (!Threat.HasValue) Threat = lower.Threat;
             if (!Fearless.HasValue) Fearless = lower.Fearless;
             if (!Baby.HasValue) Baby = lower.Baby;
@@ -233,6 +248,7 @@ namespace CreatureControl
             !EnrageThreatBonus.HasValue &&
             !EnragePhysicalResist.HasValue && !EnragePoisonImmune.HasValue && !EnrageDamageMult.HasValue &&
             !MinAttackInterval.HasValue && !CircleTargetInterval.HasValue && !CirculateWhileCharging.HasValue &&
+            !GuardRadius.HasValue &&
             !FireFear.HasValue && !FireReact.HasValue && !FireBuffer.HasValue &&
             !StalkSeconds.HasValue && !StalkRadius.HasValue && !PounceRange.HasValue &&
             !PhaseExemptTamed.HasValue &&
