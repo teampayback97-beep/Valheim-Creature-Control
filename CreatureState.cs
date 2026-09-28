@@ -771,6 +771,32 @@ namespace CreatureControl
             }
         }
 
+        /// <summary>True for a Fearless creature that can still ORIGINATE a
+        /// call for help or a commit, purely for Band's side effects - it
+        /// never acts on the verdict itself (FearApplies is what gates
+        /// actually fleeing, and Fearless keeps blocking that outright).
+        ///
+        /// Without this, a Fearless pack with nothing non-fearless nearby to
+        /// kick off the check never rallies at all: FearApplies excludes
+        /// Fearless, and FearApplies is the only thing that ever calls
+        /// WantsToFlee, which is the only thing that ever calls
+        /// Band.ShouldBackOff. RalliesWithOthers already lets a Fearless
+        /// creature be pulled into someone ELSE's band and answer a call -
+        /// this is the missing half, letting it ask the same question of its
+        /// own accord.</summary>
+        public bool CanOriginateRally
+        {
+            get
+            {
+                if (!Plugin.FearEnabled || Chr == null || Mai == null) return false;
+                if (Chr.IsTamed()) return false;
+                if (Chr.m_faction == Character.Faction.Players) return false;
+                if (Chr.m_boss) return false;
+                if (Rule == null || Rule.Fearless != true) return false;
+                return RalliesWithOthers;
+            }
+        }
+
         public void MarkRallying() => _rallyUntil = Time.time + Plugin.RallySeconds;
 
         /// <summary>Set when a flee was attempted and the creature had nowhere to

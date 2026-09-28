@@ -314,6 +314,17 @@ namespace CreatureControl
                         return Circle(__instance, st, dt, currentTarget, ref __result);
                 }
             }
+            // A Fearless pack (Lox, goblins, ulv - see RalliesWithOthers) can
+            // already be pulled into someone ELSE's band and answer a call.
+            // This is the other half: with nothing non-fearless nearby to ask
+            // the question first, it now asks it too - purely for the call-
+            // for-help/commit side effects. The verdict itself is discarded;
+            // whether this creature personally flees is FearApplies' call
+            // alone, and Fearless keeps blocking that exactly as before.
+            else if (Plugin.FearEnabled && st.CanOriginateRally && currentTarget != null)
+            {
+                Band.ShouldBackOff(st, currentTarget);
+            }
 
             // The Troll Logging Leash work loop. Gated the same way the fear
             // check above is - CanLog already requires the creature be tamed,
