@@ -708,8 +708,8 @@ namespace CreatureControl
 #                            cooldown (2s by default, set per attack prefab -
 #                            a creature with several distinct attacks can
 #                            have a different one on each). This is the field
-#                            actually behind "attacks once, then stands
-#                            around deciding for several seconds" - set it
+#                            actually behind attacking once, then standing
+#                            around deciding for several seconds - set it
 #                            low (seconds) alongside minAttackInterval for a
 #                            creature that should never let up
 #
