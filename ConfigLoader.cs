@@ -713,14 +713,22 @@ namespace CreatureControl
 #                            low (seconds) alongside minAttackInterval for a
 #                            creature that should never let up
 #
-#  GUARD - Aggressive-stance only. Vanilla only notices an enemy through its
-#  own view cone, line of sight and hearing/noise range, so a tame standing
-#  right next to you does not react to something sprinting at you from
-#  outside that cone until it is already close or has already hit someone.
-#  guardRadius makes an Aggressive tame instead notice a THREAT: any hostile
-#  that is already targeting a player or this tame, anywhere within the
-#  radius, regardless of its own senses. Does nothing under Neutral or
-#  Passive - Neutral still requires an actual hit before it holds a grudge.
+#  GUARD - vanilla only notices an enemy through its own view cone, line of
+#  sight and hearing/noise range, so a tame standing right next to you does
+#  not react to something sprinting at you from outside that cone until it
+#  is already close or has already hit someone. guardRadius replaces that
+#  with two rules, both bounded by the same radius:
+#    1. Respond to an active threat - anything already targeting a player
+#       or this creature. Works under NEUTRAL too - defending yourself or
+#       your owner isn't picking a fight.
+#    2. Seek and engage - AGGRESSIVE ONLY. Anything within the radius, full
+#       stop: a deer, a greydwarf, a fuling, hostile or not, already
+#       alerted or not. Aggressive picks fights; it doesn't wait for one.
+#  Passive is never touched by either rule. Pairs with alertRange:
+#  guardRadius decides how far it can notice a fight, alertRange decides
+#  how far it's allowed to chase before giving up and coming back to you -
+#  leave alertRange alone (or set it deliberately) rather than disabling
+#  it, or it will never come back.
 #    guardRadius             metres. Unset/0 leaves vanilla sensing alone
 #
 #  A TERRITORIAL CREATURE is just a small radius plus Aggressive:

@@ -606,21 +606,29 @@ namespace CreatureControl
         // creature, with ITS OWN view cone/hearing/noise-range, perceive that
         // one" - so a tame standing right beside its owner never reacts to
         // something sprinting in from outside that cone until it's already
-        // close, or has already hit someone. Guard answers a different
-        // question instead: "is that thing already committed to a fight with
-        // a player or with me" - and if so, and it's within GuardRadius, this
-        // creature is allowed to sense it regardless of its own senses.
-        // Aggressive-only, matching how the feature was asked for: Neutral
-        // keeps requiring an actual hit before it holds a grudge, exactly as
-        // it did before this existed. Nothing here changes IsEnemy, Band, or
-        // the fear/flee path - it only ever widens what counts as sensed.
+        // close, or has already hit someone. Guard is two separate rules,
+        // both bounded by GuardRadius, neither touching IsEnemy, Band, or
+        // the fear/flee path - they only ever widen what counts as sensed:
+        //
+        //   1. Respond to an active threat - anything already targeting a
+        //      player or this creature. Defending yourself or your owner
+        //      isn't picking a fight, so this is available to Neutral too,
+        //      not just Aggressive.
+        //   2. Seek and engage - Aggressive only. "I am attacking you if
+        //      you are within this radius", full stop: a deer, a greydwarf,
+        //      a fuling, hostile or not, alerted or not. Aggressive means it
+        //      picks fights, it doesn't wait for one to already be starting.
+        //
+        // Neutral still requires an actual hit before it holds a grudge for
+        // everything outside rule 1 - that's unchanged.
         public bool GuardConfigured =>
             Rule != null && Rule.GuardRadius.HasValue && Rule.GuardRadius.Value > 0f &&
-            Chr != null && Chr.IsTamed() && _mode == BehaviorMode.Aggressive;
+            Chr != null && Chr.IsTamed() &&
+            (_mode == BehaviorMode.Aggressive || _mode == BehaviorMode.Neutral);
 
         /// <summary>True if <paramref name="other"/> is a live threat this
-        /// creature should be allowed to sense early: within GuardRadius and
-        /// already targeting a player or this creature itself.</summary>
+        /// creature should be allowed to sense early. See GuardConfigured
+        /// for the two rules this checks, in order.</summary>
         public bool SensesGuardThreat(Character other)
         {
             if (!GuardConfigured || other == null || Chr == null) return false;
@@ -628,13 +636,21 @@ namespace CreatureControl
             float r = Rule.GuardRadius.Value;
             if ((other.transform.position - Chr.transform.position).sqrMagnitude > r * r) return false;
 
-            var otherAi = other.GetBaseAI();
-            if (otherAi == null) return false;
+            // Rule 1: already fighting me or my owner - both stances.
+            var theirTarget = other.GetBaseAI()?.GetTargetCreature();
+            if (theirTarget == Chr || theirTarget is Player) return true;
 
-            var theirTarget = otherAi.GetTargetCreature();
-            if (theirTarget == null) return false;
+            // Rule 2: seek and engage anything in range - Aggressive only.
+            if (_mode != BehaviorMode.Aggressive) return false;
+            if (other.IsTamed() || other is Player || other.IsDead()) return false;
 
-            return theirTarget == Chr || theirTarget is Player;
+            // Untargetable factions (ambient decorative wildlife - insects,
+            // butterflies) opt out of every hostility check in this mod, so
+            // they opt out of this one too. A deer is not in that set.
+            int faction = (int)other.GetFaction();
+            if (FactionRegistry.AnyUntargetable && FactionRegistry.IsUntargetable(faction)) return false;
+
+            return true;
         }
 
         // ---- stalking -----------------------------------------------------------

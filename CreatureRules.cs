@@ -160,18 +160,27 @@ namespace CreatureControl
         /// come close to hitting first.</summary>
         public float? AttackIntervalOverride;
 
-        // --- guard (aggressive-stance early intervention) ---------------------
+        // --- guard (early sensing, two rules) -----------------------------------
         // Vanilla senses an enemy only through its own view cone/hearing/noise
         // range - a tame standing beside its owner never notices something
         // sprinting at them from outside that cone until it's already close or
-        // already landed a hit. This lets an Aggressive tame notice a THREAT
-        // instead: any hostile already targeting a player or this tame itself,
-        // anywhere within GuardRadius, regardless of line of sight or its own
-        // senses. Deliberately separate from WildView/TamedView/AlertRange -
-        // those still govern how this creature sees the rest of the world,
-        // this is purely "something has already committed to a fight near me."
-        // Opt-in (null = off) and Aggressive-only: Neutral keeps requiring an
-        // actual hit before it holds a grudge, exactly as before.
+        // already landed a hit. GuardRadius replaces that with two independent
+        // rules, both bounded by the same radius:
+        //
+        //   1. Respond to an active threat - anything already targeting a
+        //      player or this creature. Available to NEUTRAL as well as
+        //      Aggressive: defending yourself or your owner isn't picking a
+        //      fight.
+        //   2. Seek and engage - AGGRESSIVE ONLY. Anything within the radius,
+        //      full stop - a deer, a greydwarf, a fuling, hostile or not,
+        //      already alerted or not. Aggressive means it picks fights, it
+        //      doesn't wait for one to already be starting.
+        //
+        // Deliberately separate from WildView/TamedView/AlertRange - those
+        // still govern how this creature sees the rest of the world and how
+        // far it will chase before giving up and returning; this only widens
+        // what counts as noticed in the first place. Opt-in (null = off).
+        // Passive is never touched by either rule.
         public float? GuardRadius;
 
         // --- troll logging ---------------------------------------------------
