@@ -425,6 +425,18 @@ namespace CreatureControl
         bool _enraged;
         float _nextEnrageEval;
         float _enrageThreatBonus;
+        float _enrageHoldUntil;
+
+        // How long a genuine enrage holds once triggered, before the verdict
+        // is allowed to turn it back off. Without this, a threat tally that
+        // sits right on the boundary (a Fuling camp thinning out mid-fight)
+        // flips the verdict every single re-check - which re-fires the cue
+        // (an Any State animator transition) before the last one ever
+        // finishes, locking the creature into replaying its taunt instead of
+        // ever landing back in an attack. The resistances/threat/damage
+        // bonus hold for exactly as long as the cue does, so nothing reads
+        // as enraged for longer than it visibly looks enraged.
+        const float EnrageMinHoldSeconds = 6f;
         HitData.DamageModifiers _origDamageMods;
         bool _enrageDamageModsApplied;
 
@@ -457,7 +469,19 @@ namespace CreatureControl
                             string.Equals(CreatureRules.CleanName(target.gameObject.name), Prefab,
                                           System.StringComparison.OrdinalIgnoreCase);
 
-            SetEnraged(outnumbered || sameKind);
+            bool wantsEnraged = outnumbered || sameKind;
+
+            if (wantsEnraged)
+            {
+                SetEnraged(true);
+                _enrageHoldUntil = Time.time + EnrageMinHoldSeconds;
+            }
+            else if (Time.time >= _enrageHoldUntil)
+            {
+                SetEnraged(false);
+            }
+            // else: the verdict just flipped back to calm, but the hold
+            // hasn't elapsed - stay enraged rather than flicker.
         }
 
         void SetEnraged(bool on)
