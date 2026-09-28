@@ -35,7 +35,7 @@ namespace CreatureControl
         }
 
         public static int Tracked => _registry.Count;
-        public static void ClearRegistry() { _registry.Clear(); _byAi.Clear(); }
+        public static void ClearRegistry() { _registry.Clear(); _byAi.Clear(); ForcedTargetCount = 0; }
 
         public static IEnumerable<CreatureState> AllTracked => _registry.Values;
 
@@ -664,13 +664,23 @@ namespace CreatureControl
         public Character ForcedTarget { get; private set; }
         public bool HasForcedTarget => ForcedTarget != null;
 
+        /// <summary>How many tracked creatures currently carry a live forced-
+        /// target order - lets TargetMarker skip its per-frame scan outright
+        /// on the (overwhelmingly common) tick where nobody has one.</summary>
+        public static int ForcedTargetCount { get; private set; }
+
         public void SetForcedTarget(Character target)
         {
+            if (ForcedTarget == null) ForcedTargetCount++;
             ForcedTarget = target;
             Ai?.Alert();
         }
 
-        public void ClearForcedTarget() => ForcedTarget = null;
+        public void ClearForcedTarget()
+        {
+            if (ForcedTarget != null) ForcedTargetCount--;
+            ForcedTarget = null;
+        }
 
         /// <summary>True if <paramref name="other"/> is still a live, in-bounds
         /// forced target - and false otherwise, clearing it as a side effect so
@@ -1140,6 +1150,7 @@ namespace CreatureControl
         {
             if ((object)_key != null) _registry.Remove(_key);
             if ((object)_aiKey != null) _byAi.Remove(_aiKey);
+            ClearForcedTarget();
         }
 
         /// <summary>

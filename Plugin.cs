@@ -587,6 +587,7 @@ namespace CreatureControl
             HandleStanceKey();
             HandleLoggingKey();
             HandleForceTargetKey();
+            TargetMarker.Tick();
 
             // One clock read for the whole mod. Only does real work on the two
             // ticks a day when it actually turns over.
@@ -863,10 +864,16 @@ namespace CreatureControl
         void HandleForceTargetKey()
         {
             if (_forceTargetKey == null || !_forceTargetKey.Value.IsDown()) return;
-            if (IsTyping()) return;
+            if (IsTyping())
+            {
+                Log.LogInfo("[CC target-cmd] key seen but IsTyping() blocked it.");
+                return;
+            }
 
             var player = Player.m_localPlayer;
             if (player == null) return;
+
+            Log.LogInfo("[CC target-cmd] key pressed, raycasting...");
 
             var target = RaycastTarget(player);
             if (target == null || target.IsDead())
@@ -876,11 +883,13 @@ namespace CreatureControl
             }
             if (target.IsTamed() || target is Player)
             {
+                Log.LogInfo($"[CC target-cmd] raycast hit {target.name}, refused (tamed or player).");
                 player.Message(MessageHud.MessageType.Center, "Can't target a tame or a player.", 0, null, false);
                 return;
             }
 
             int n = ForcedTarget.Command(target);
+            Log.LogInfo($"[CC target-cmd] {target.name} marked - {n} tame(s) commanded.");
 
             var name = target.m_name;
             var tameable = target.gameObject.GetComponent<Tameable>();
@@ -890,13 +899,41 @@ namespace CreatureControl
                 n > 0 ? $"Attack {name}!" : "No tames to command.", 0, null, false);
         }
 
+        // Same layer set vanilla's own melee attack raycast uses (Player.s_attackMask) -
+        // every character-related layer plus solid terrain/pieces, so a wall or a
+        // mountain still blocks the shot, but decorative clutter with no gameplay
+        // collider never can. A bare, unmasked Physics.Raycast (the first cut of
+        // this feature) had no such guarantee and could plausibly stop on
+        // anything in the world with ANY collider, character or not - the leading
+        // suspect for "the hotkey did nothing" reports with no error in the log.
+        static int _targetRayMask = -1;
+        static int TargetRayMask
+        {
+            get
+            {
+                if (_targetRayMask < 0)
+                    _targetRayMask = LayerMask.GetMask(
+                        "character", "character_net", "character_ghost", "character_noenv", "hitbox",
+                        "Default", "static_solid", "Default_small", "terrain", "piece", "piece_nonsolid", "vehicle");
+                return _targetRayMask;
+            }
+        }
+
         static Character RaycastTarget(Player player)
         {
             if (GameCamera.instance == null) return null;
             var cam = GameCamera.instance.transform;
-            if (Physics.Raycast(cam.position, cam.forward, out var hit, ForceTargetRange))
-                return hit.collider.GetComponentInParent<Character>();
-            return null;
+            if (!Physics.Raycast(cam.position, cam.forward, out var hit, ForceTargetRange, TargetRayMask))
+            {
+                Log.LogInfo("[CC target-cmd] raycast hit nothing at all.");
+                return null;
+            }
+
+            var chr = hit.collider.GetComponentInParent<Character>();
+            if (chr == null)
+                Log.LogInfo($"[CC target-cmd] raycast hit '{hit.collider.name}' " +
+                            $"(layer {LayerMask.LayerToName(hit.collider.gameObject.layer)}), no Character there.");
+            return chr;
         }
 
         /// <summary>Push freshly-loaded rules onto creatures already in the world,
@@ -935,6 +972,7 @@ namespace CreatureControl
             Phase.Forget();
             TrollLogging.Reset();
             TotemBind.Reset();
+            TargetMarker.Reset();
         }
     }
 }
