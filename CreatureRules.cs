@@ -148,6 +148,17 @@ namespace CreatureControl
         /// outright - the check it drives is gated on this being > 0.</summary>
         public float? CircleTargetInterval;
         public bool? CirculateWhileCharging;
+        /// <summary>MinAttackInterval alone does nothing if this is still
+        /// long: vanilla gates every attack behind BOTH MonsterAI's own
+        /// m_minAttackInterval AND each individual weapon/attack item's own
+        /// baked-in cooldown (m_aiAttackInterval, 2s by default, set per
+        /// attack prefab - Bjorn's bite, claws and slam can each carry a
+        /// different one). This overrides every weapon item this creature
+        /// carries to the same value, which is the field actually gating
+        /// "attacks, then stands around for several seconds before it can
+        /// attack again" - not MinAttackInterval, which most creatures never
+        /// come close to hitting first.</summary>
+        public float? AttackIntervalOverride;
 
         // --- guard (aggressive-stance early intervention) ---------------------
         // Vanilla senses an enemy only through its own view cone/hearing/noise
@@ -198,6 +209,7 @@ namespace CreatureControl
             if (!MinAttackInterval.HasValue) MinAttackInterval = lower.MinAttackInterval;
             if (!CircleTargetInterval.HasValue) CircleTargetInterval = lower.CircleTargetInterval;
             if (!CirculateWhileCharging.HasValue) CirculateWhileCharging = lower.CirculateWhileCharging;
+            if (!AttackIntervalOverride.HasValue) AttackIntervalOverride = lower.AttackIntervalOverride;
             if (!GuardRadius.HasValue) GuardRadius = lower.GuardRadius;
             if (!Threat.HasValue) Threat = lower.Threat;
             if (!Fearless.HasValue) Fearless = lower.Fearless;
@@ -248,6 +260,7 @@ namespace CreatureControl
             !EnrageThreatBonus.HasValue &&
             !EnragePhysicalResist.HasValue && !EnragePoisonImmune.HasValue && !EnrageDamageMult.HasValue &&
             !MinAttackInterval.HasValue && !CircleTargetInterval.HasValue && !CirculateWhileCharging.HasValue &&
+            !AttackIntervalOverride.HasValue &&
             !GuardRadius.HasValue &&
             !FireFear.HasValue && !FireReact.HasValue && !FireBuffer.HasValue &&
             !StalkSeconds.HasValue && !StalkRadius.HasValue && !PounceRange.HasValue &&

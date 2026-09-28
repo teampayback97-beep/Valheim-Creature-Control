@@ -79,6 +79,13 @@ namespace CreatureControl
         bool _origCirculateWhileCharging;
         bool _aggressionApplied;
 
+        /// <summary>Per-weapon-item original m_aiAttackInterval, captured
+        /// lazily the first time AttackIntervalOverride is applied - each
+        /// item this creature carries can have a different vanilla value,
+        /// so a single float can't hold "the original".</summary>
+        Dictionary<ItemDrop.ItemData, float> _origAttackIntervals;
+        bool _attackIntervalsApplied;
+
         bool _lastTamed, _tamedKnown;
 
         /// <summary>
@@ -1177,6 +1184,12 @@ namespace CreatureControl
                     Mai.m_circulateWhileCharging = _origCirculateWhileCharging;
                     _aggressionApplied = false;
                 }
+                if (_attackIntervalsApplied && _origAttackIntervals != null)
+                {
+                    foreach (var kv in _origAttackIntervals)
+                        if (kv.Key?.m_shared != null) kv.Key.m_shared.m_aiAttackInterval = kv.Value;
+                    _attackIntervalsApplied = false;
+                }
             }
             RestoreEnrage();
             if (_factionApplied && Chr != null)
@@ -1282,6 +1295,38 @@ namespace CreatureControl
                     Mai.m_circleTargetInterval = _origCircleTargetInterval;
                     Mai.m_circulateWhileCharging = _origCirculateWhileCharging;
                     _aggressionApplied = false;
+                }
+
+                // MinAttackInterval alone is usually a no-op: vanilla also
+                // gates every attack behind the WEAPON ITEM's own baked-in
+                // cooldown (m_aiAttackInterval), which this creature's own
+                // attack prefabs each carry independently of anything on
+                // MonsterAI. Values are captured lazily per item the first
+                // time this runs, since different attacks can carry
+                // different vanilla defaults.
+                if (Rule.AttackIntervalOverride.HasValue && Chr is Humanoid hum)
+                {
+                    var inv = hum.GetInventory();
+                    if (inv != null)
+                    {
+                        if (_origAttackIntervals == null)
+                            _origAttackIntervals = new Dictionary<ItemDrop.ItemData, float>();
+
+                        foreach (var item in inv.GetAllItems())
+                        {
+                            if (item?.m_shared == null || !item.IsWeapon()) continue;
+                            if (!_origAttackIntervals.ContainsKey(item))
+                                _origAttackIntervals[item] = item.m_shared.m_aiAttackInterval;
+                            item.m_shared.m_aiAttackInterval = Rule.AttackIntervalOverride.Value;
+                        }
+                        _attackIntervalsApplied = true;
+                    }
+                }
+                else if (_attackIntervalsApplied && _origAttackIntervals != null)
+                {
+                    foreach (var kv in _origAttackIntervals)
+                        if (kv.Key?.m_shared != null) kv.Key.m_shared.m_aiAttackInterval = kv.Value;
+                    _attackIntervalsApplied = false;
                 }
 
                 // m_enableHuntPlayer is only read in MonsterAI.Awake, so the

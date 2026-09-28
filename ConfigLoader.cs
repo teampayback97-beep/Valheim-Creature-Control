@@ -568,6 +568,15 @@ namespace CreatureControl
                         else Warn(l, $"expected true/false, got '{l.Value}'");
                         break;
 
+                    case "attackintervaloverride":
+                        if (F(l.Value, out var aio))
+                        {
+                            if (aio < 0f) Warn(l, $"attackIntervalOverride cannot be negative; got {aio}");
+                            else rule.AttackIntervalOverride = aio;
+                        }
+                        else WarnNum(l);
+                        break;
+
                     case "guardradius":
                         if (F(l.Value, out var gr))
                         {
@@ -693,6 +702,16 @@ namespace CreatureControl
 #    circleTargetInterval    0 disables vanilla's forced disengage-and-circle
 #    circulateWhileCharging  true | false - wander instead of holding still
 #                            while the attack itself is on cooldown
+#    attackIntervalOverride  minAttackInterval ALONE usually does nothing -
+#                            vanilla also gates every attack behind each
+#                            individual weapon/attack item's own baked-in
+#                            cooldown (2s by default, set per attack prefab -
+#                            a creature with several distinct attacks can
+#                            have a different one on each). This is the field
+#                            actually behind "attacks once, then stands
+#                            around deciding for several seconds" - set it
+#                            low (seconds) alongside minAttackInterval for a
+#                            creature that should never let up
 #
 #  GUARD - Aggressive-stance only. Vanilla only notices an enemy through its
 #  own view cone, line of sight and hearing/noise range, so a tame standing
@@ -717,6 +736,7 @@ tamedHearRange = 15
 minAttackInterval      = 0.2
 circleTargetInterval   = 0
 circulateWhileCharging = false
+attackIntervalOverride = 0.3
 enrageWhenOutnumbered  = true
 enrageVsSameKind       = true
 enrageThreatBonus      = 3
