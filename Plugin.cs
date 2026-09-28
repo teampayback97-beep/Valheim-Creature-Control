@@ -25,6 +25,8 @@ namespace CreatureControl
         static ConfigEntry<bool> _cycling;
         static ConfigEntry<float> _grudge;
         static ConfigEntry<KeyboardShortcut> _cycleKey;
+        static ConfigEntry<KeyboardShortcut> _forceTargetKey;
+        static ConfigEntry<float> _forceTargetRange;
 
         static ConfigEntry<bool> _enrageOn;
 
@@ -88,6 +90,9 @@ namespace CreatureControl
         public static float GrudgeSeconds => _grudge == null ? 30f : _grudge.Value;
         public static string CycleKeyLabel =>
             _cycleKey == null ? "L.Alt + X" : _cycleKey.Value.ToString();
+        public static string ForceTargetKeyLabel =>
+            _forceTargetKey == null ? "L.Alt + T" : _forceTargetKey.Value.ToString();
+        public static float ForceTargetRange => _forceTargetRange == null ? 50f : _forceTargetRange.Value;
 
         /// <summary>Master switch for the enrage mechanic. Reuses
         /// FearInterval for its own re-check cadence rather than adding a
@@ -202,6 +207,15 @@ namespace CreatureControl
                 new ConfigDescription(
                     "How many seconds a Neutral creature stays angry at whatever hurt it before settling down.",
                     new AcceptableValueRange<float>(1f, 600f)));
+            _forceTargetKey = Config.Bind("General", "Force Target Key",
+                new KeyboardShortcut(KeyCode.T, KeyCode.LeftAlt),
+                "Look at anything and press this to send every tame you have after it, overriding " +
+                "stance, Guard and fear alike. Each tame keeps fighting until the target dies or it " +
+                "would have to leave its own leash (alertRange) to reach it - never further than that.");
+            _forceTargetRange = Config.Bind("General", "Force Target Range", 50f,
+                new ConfigDescription(
+                    "How far the Force Target hotkey can pick out a target you are looking at.",
+                    new AcceptableValueRange<float>(10f, 200f)));
 
             _enrageOn = Config.Bind("Enrage", "Enable Enrage", true,
                 "Master switch for the enrage mechanic - a creature reads the same " +
@@ -572,6 +586,7 @@ namespace CreatureControl
             HandleReload();
             HandleStanceKey();
             HandleLoggingKey();
+            HandleForceTargetKey();
 
             // One clock read for the whole mod. Only does real work on the two
             // ticks a day when it actually turns over.
@@ -836,6 +851,52 @@ namespace CreatureControl
 
             player.Message(MessageHud.MessageType.Center,
                            $"{name}: logging {(next ? "ON" : "OFF")}", 0, null, false);
+        }
+
+        /// <summary>
+        /// "Attack this" - look at anything, wild or hostile, and press the
+        /// hotkey to send every tame you have after it. Deliberately not
+        /// restricted to a hover-interact range like the stance/logging keys:
+        /// those are commands given TO a tame, this one is aimed AT a target,
+        /// which is routinely further away than interact distance.
+        /// </summary>
+        void HandleForceTargetKey()
+        {
+            if (_forceTargetKey == null || !_forceTargetKey.Value.IsDown()) return;
+            if (IsTyping()) return;
+
+            var player = Player.m_localPlayer;
+            if (player == null) return;
+
+            var target = RaycastTarget(player);
+            if (target == null || target.IsDead())
+            {
+                player.Message(MessageHud.MessageType.Center, "No target.", 0, null, false);
+                return;
+            }
+            if (target.IsTamed() || target is Player)
+            {
+                player.Message(MessageHud.MessageType.Center, "Can't target a tame or a player.", 0, null, false);
+                return;
+            }
+
+            int n = ForcedTarget.Command(target);
+
+            var name = target.m_name;
+            var tameable = target.gameObject.GetComponent<Tameable>();
+            if (tameable != null) name = tameable.GetHoverName();
+
+            player.Message(MessageHud.MessageType.Center,
+                n > 0 ? $"Attack {name}!" : "No tames to command.", 0, null, false);
+        }
+
+        static Character RaycastTarget(Player player)
+        {
+            if (GameCamera.instance == null) return null;
+            var cam = GameCamera.instance.transform;
+            if (Physics.Raycast(cam.position, cam.forward, out var hit, ForceTargetRange))
+                return hit.collider.GetComponentInParent<Character>();
+            return null;
         }
 
         /// <summary>Push freshly-loaded rules onto creatures already in the world,

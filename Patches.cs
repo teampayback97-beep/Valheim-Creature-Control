@@ -115,6 +115,18 @@ namespace CreatureControl
         {
             if (a == null || b == null || a == b) return true;
 
+            // A player-forced target outranks everything below, including
+            // Passive/Neutral stance - it is an explicit command, not a
+            // reaction. ForceTarget.Command already refuses to hand out a
+            // player or another tame as the target, so this can never turn
+            // a pet on its owner or on another pet.
+            var forcedSt = CreatureState.For(a);
+            if (forcedSt != null && forcedSt.ForcedTarget == b)
+            {
+                __result = true;
+                return false;
+            }
+
             // The player's own view of the world stays vanilla's: hostile to
             // everything except Dvergr and their own tames. This table is
             // SYMMETRIC, so without this a "Friendly" written to stop boars
@@ -250,14 +262,17 @@ namespace CreatureControl
             if (target == null) return true;
 
             var st = CreatureState.For(__instance);
-            if (st == null || !st.GuardConfigured) return true;
+            if (st == null) return true;
 
-            if (!st.SensesGuardThreat(target)) return true;
+            bool forced = st.SensesForcedTarget(target);
+            bool guarded = !forced && st.GuardConfigured && st.SensesGuardThreat(target);
+            if (!forced && !guarded) return true;
 
             if (Plugin.Verbose)
-                Plugin.Log.LogInfo(
-                    $"[CC guard] {st.Prefab} senses {(target is Player ? "Player" : target.name)} " +
-                    $"early (targeting a player or {st.Prefab} within guardRadius).");
+                Plugin.Log.LogInfo(forced
+                    ? $"[CC target-cmd] {st.Prefab} forced onto {(target is Player ? "Player" : target.name)}."
+                    : $"[CC guard] {st.Prefab} senses {(target is Player ? "Player" : target.name)} " +
+                      $"early (targeting a player or {st.Prefab} within guardRadius).");
 
             __instance.Alert();
             __result = true;
@@ -296,7 +311,9 @@ namespace CreatureControl
         {
             if (target == null) return true;
             var st = CreatureState.For(__instance);
-            if (st == null || !st.GuardConfigured || !st.SensesGuardThreat(target)) return true;
+            if (st == null) return true;
+            if (!st.SensesForcedTarget(target) &&
+                !(st.GuardConfigured && st.SensesGuardThreat(target))) return true;
             __instance.Alert();
             __result = true;
             return false;
@@ -310,7 +327,9 @@ namespace CreatureControl
         {
             if (target == null) return true;
             var st = CreatureState.For(__instance);
-            if (st == null || !st.GuardConfigured || !st.SensesGuardThreat(target)) return true;
+            if (st == null) return true;
+            if (!st.SensesForcedTarget(target) &&
+                !(st.GuardConfigured && st.SensesGuardThreat(target))) return true;
             __instance.Alert();
             __result = true;
             return false;
@@ -369,6 +388,19 @@ namespace CreatureControl
 
             var st = CreatureState.For((BaseAI)__instance);
             if (st == null) return true;
+
+            // A forced target ("attack this") outranks fear, stalking and
+            // logging alike - it is a standing order, not a verdict this
+            // creature reached on its own. Writing the slot directly (rather
+            // than relying on FindEnemy's own multi-second timer) is what
+            // makes the command feel immediate; SensesForcedTarget is what
+            // eventually stands it down, on death or on leaving this
+            // creature's own leash - never anything wider than that.
+            if (st.HasForcedTarget && st.SensesForcedTarget(st.ForcedTarget))
+            {
+                ForcedTarget.Force(__instance, st.ForcedTarget);
+                return true;
+            }
 
             // A creature we tried and failed to move is handed back to vanilla
             // for a while. Worst case nothing here fires; it must never be

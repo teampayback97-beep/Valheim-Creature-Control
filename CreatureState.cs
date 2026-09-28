@@ -653,6 +653,64 @@ namespace CreatureControl
             return true;
         }
 
+        // ---- forced target (player command) --------------------------------------
+        // "Attack this" - a standing order, not a reaction. Outranks stance,
+        // Guard, fear/flee and Enrage's own targeting alike; the only two ways
+        // out are the target dying or the target leaving THIS creature's own
+        // leash (alertRange), same boundary Guard and vanilla's tamed-leash
+        // check already use. Never settable to a player or another tame - see
+        // ForcedTarget.Command, which filters both out before this is ever
+        // called.
+        public Character ForcedTarget { get; private set; }
+        public bool HasForcedTarget => ForcedTarget != null;
+
+        public void SetForcedTarget(Character target)
+        {
+            ForcedTarget = target;
+            Ai?.Alert();
+        }
+
+        public void ClearForcedTarget() => ForcedTarget = null;
+
+        /// <summary>True if <paramref name="other"/> is still a live, in-bounds
+        /// forced target - and false otherwise, clearing it as a side effect so
+        /// callers never need to repeat that check themselves.</summary>
+        public bool SensesForcedTarget(Character other)
+        {
+            if (ForcedTarget == null || other != ForcedTarget) return false;
+            if (Chr == null || Mai == null) { ClearForcedTarget(); return false; }
+
+            if (ForcedTarget.IsDead())
+            {
+                if (Plugin.Verbose)
+                    Plugin.Log.LogInfo($"[CC target-cmd] {Prefab}: forced target down, standing down.");
+                ClearForcedTarget();
+                return false;
+            }
+
+            // Same leash vanilla's own tamed-target check already enforces
+            // (Distance(target, follow-or-patrol) > m_alertRange), just
+            // evaluated here too so we can stand the order down cleanly
+            // instead of flickering the target on and off right at the edge.
+            float leash = Mai.m_alertRange;
+            if (leash > 0f && leash < 9000f)
+            {
+                var followGo = Mai.GetFollowTarget();
+                Vector3 anchor = followGo != null
+                    ? followGo.transform.position
+                    : (Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Chr.transform.position);
+                if ((ForcedTarget.transform.position - anchor).sqrMagnitude > leash * leash)
+                {
+                    if (Plugin.Verbose)
+                        Plugin.Log.LogInfo($"[CC target-cmd] {Prefab}: forced target left leash range, standing down.");
+                    ClearForcedTarget();
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         // ---- stalking -----------------------------------------------------------
         // A hunter that walks straight at you is not stalking. This holds it at
         // a distance for a few seconds after it picks you out, circling, before
