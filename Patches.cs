@@ -259,6 +259,7 @@ namespace CreatureControl
                     $"[CC guard] {st.Prefab} senses {(target is Player ? "Player" : target.name)} " +
                     $"early (targeting a player or {st.Prefab} within guardRadius).");
 
+            __instance.Alert();
             __result = true;
             return false;
         }
@@ -276,6 +277,17 @@ namespace CreatureControl
     /// known position instead of closing in - which looks exactly like
     /// standing there doing nothing while the real threat is understood
     /// (the acquisition succeeded) but never acted on.
+    ///
+    /// All three Guard bypasses also call Alert() on a success. SetAlerted
+    /// only otherwise fires deep inside vanilla's own movement branch, gated
+    /// on a distance check most Guard-only detections never satisfy (the
+    /// whole point of Guard is sensing something outside normal range) - so
+    /// a tame could be actively fighting via Guard while IsAlerted() still
+    /// read false. That distinction is externally visible: BetterTames'
+    /// TeleportFollow (Koro.bettertames) is documented to skip teleporting a
+    /// pet "if not in combat", and confirmed in a real log to still teleport
+    /// Bjorn mid-fight, immediately wiping his target - consistent with a
+    /// combat check elsewhere reading Alerted state that Guard never set.
     /// </summary>
     [HarmonyPatch(typeof(BaseAI), nameof(BaseAI.CanHearTarget), typeof(Character))]
     static class Patch_BaseAI_CanHearTarget_Guard
@@ -285,6 +297,7 @@ namespace CreatureControl
             if (target == null) return true;
             var st = CreatureState.For(__instance);
             if (st == null || !st.GuardConfigured || !st.SensesGuardThreat(target)) return true;
+            __instance.Alert();
             __result = true;
             return false;
         }
@@ -298,6 +311,7 @@ namespace CreatureControl
             if (target == null) return true;
             var st = CreatureState.For(__instance);
             if (st == null || !st.GuardConfigured || !st.SensesGuardThreat(target)) return true;
+            __instance.Alert();
             __result = true;
             return false;
         }
