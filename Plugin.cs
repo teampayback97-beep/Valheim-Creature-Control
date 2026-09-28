@@ -474,13 +474,15 @@ namespace CreatureControl
                 "knocking holes in your walls. They can still hit trees, rocks and everything " +
                 "else in the world exactly as before; this only shields player-built pieces.");
             _offlineTaming = Config.Bind("Taming", "Credit Taming Progress While Away", true,
-                "Vanilla's own taming timer only runs while the creature is actually loaded - leave " +
-                "the zone and it just stops, with no memory of how long you were gone. This " +
-                "retroactively credits that time when you come back, capped at however long the " +
-                "creature would genuinely have stayed fed for - a short trip resumes seamlessly, a " +
-                "long one leaves it hungry exactly where it would have gone hungry anyway, never " +
-                "further ahead than if you had stood there the whole time. Applies to every " +
-                "tameable creature in the game, vanilla or modded.");
+                "Vanilla's own taming timer AND its 'find and eat nearby food' behaviour both only " +
+                "run while the creature is actually loaded - leave the zone and both just stop, " +
+                "food pile or not. This replays that behaviour retroactively when you come back: it " +
+                "chains through however many matching food items were left nearby (actually eating " +
+                "them, same as it would have live) to stay fed the whole time you were gone. A big " +
+                "enough supply covers the entire trip; running out partway just leaves it hungry " +
+                "exactly where it would have gone hungry live, never further ahead than a player " +
+                "standing there feeding it by hand would have gotten it. MonsterAI-driven tames " +
+                "only (that's what has the consume-food behaviour at all) - vanilla or modded.");
 
             _loggingOn = Config.Bind("Logging", "Enable Troll Logging", true,
                 "Master switch for the Troll Logging Leash feature. Off leaves the hotkey and " +

@@ -1,34 +1,40 @@
 using System;
+using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
 
 namespace CreatureControl
 {
     /// <summary>
-    /// Vanilla's own taming timer only ticks while the creature is actually
-    /// loaded: Tameable.TamingUpdate runs on an InvokeRepeating tied to the
-    /// GameObject's lifetime, which only exists while a player is close
-    /// enough to keep that zone simulated. Leave the area and the countdown
-    /// simply stops - it has no memory of how long you were gone, and it
-    /// never makes up the difference on its own.
+    /// Vanilla's own taming loop only runs while the creature is actually
+    /// loaded: Tameable.TamingUpdate (the timer) and MonsterAI.UpdateConsumeItem
+    /// (the "find and eat nearby food" behaviour) are both driven by that
+    /// GameObject's own Update, which only exists while a player is close
+    /// enough to keep the zone simulated. Leave the area and both stop cold -
+    /// no memory, no catch-up, whatever food is sitting there just waits.
     ///
-    /// This patches Tameable.Awake (which fires every time the creature's
-    /// GameObject re-instantiates - on first spawn AND every time you come
-    /// back into range) to stamp a last-seen timestamp in its ZDO, then on
-    /// the next Awake retroactively credits the elapsed time as taming
-    /// progress - capped at however long it would genuinely have stayed fed
-    /// for. A short trip resumes as if nothing happened; a long one leaves
-    /// it hungry at exactly the point it would have gone hungry anyway, on
-    /// its own vanilla feeding math - never further ahead than a player
-    /// standing there the whole time would have gotten it.
+    /// This patches Tameable.Awake (fires on first spawn AND every time the
+    /// creature re-instantiates after being unloaded) to work out how long it
+    /// was actually gone, then replays what MonsterAI.UpdateConsumeItem would
+    /// have done for that whole stretch: chain through however many nearby
+    /// matching food items (MonsterAI.m_consumeItems - the same list a taming
+    /// mod's consumeItems config populates) it would have needed to eat to
+    /// stay fed the entire time, actually consuming them from the world, and
+    /// crediting the full stretch of taming progress that food bought. Once
+    /// the supply runs out it stops exactly where vanilla's own hunger check
+    /// would - it can never progress further than a real player standing
+    /// there feeding it by hand would have gotten it, just without requiring
+    /// anyone to physically watch it happen.
     ///
-    /// Applies to every Tameable creature in the game, vanilla or modded -
-    /// this touches only the base game's own component, nothing specific to
-    /// any particular taming mod's config.
+    /// UpdateConsumeItem is MonsterAI-only (AnimalAI has no such thing), so
+    /// this only ever applies to MonsterAI-driven tames - which covers every
+    /// creature big enough to need a multi-feed taming in the first place.
     /// </summary>
     static class OfflineTaming
     {
         public const string ZdoLastSeenKey = "CC_tameLastSeen";
+        static int _itemMask = -1;
+        static readonly Collider[] _hits = new Collider[64];
 
         [HarmonyPatch(typeof(Tameable), "Awake")]
         static class Patch_Tameable_Awake_Catchup
@@ -56,27 +62,51 @@ namespace CreatureControl
                 if (awaySeconds <= 0) return;
 
                 // No record of what happened while unloaded, so a creature
-                // that comes back already fighting is left alone rather than
-                // guessed at - skip the credit entirely instead of rewarding
-                // or punishing a fight nobody watched.
+                // that comes back mid-fight is left alone rather than guessed
+                // at - skip the whole catch-up instead of rewarding or
+                // punishing a fight nobody watched.
                 var mai = __instance.GetComponent<MonsterAI>();
-                if (mai != null && mai.IsAlerted()) return;
+                if (mai == null || mai.IsAlerted()) return;
 
-                // How much of the time away happens to fall BEFORE it would
-                // have gone hungry, using vanilla's own feeding math
-                // (Tameable.IsHungry: now - lastFed > fedDuration). Credit
-                // only that portion, so this produces exactly the same
-                // "hungry or not" verdict vanilla would reach on its own the
-                // moment it re-loads - it just also advances the timer for
-                // the stretch that was genuinely still fed.
+                float fedDuration = __instance.m_fedDuration;
+                if (fedDuration <= 0f) return;
+
                 long lastFedTicks = zdo.GetLong(ZDOVars.s_tameLastFeeding, 0L);
                 double sinceFedAtDeparture = new TimeSpan(lastSeenTicks - lastFedTicks).TotalSeconds;
-                double stillFedFor = __instance.m_fedDuration - sinceFedAtDeparture;
-                double credit = Math.Max(0, Math.Min(awaySeconds, stillFedFor));
-                if (credit <= 0) return;
+                double stillFedFor = fedDuration - sinceFedAtDeparture;
+
+                double covered;
+                int eaten = 0;
+
+                if (awaySeconds <= stillFedFor)
+                {
+                    // Was never going to go hungry during the whole gap -
+                    // nothing needed to eat anything for this to hold.
+                    covered = awaySeconds;
+                }
+                else
+                {
+                    double alreadyFed = Math.Max(0, stillFedFor);
+                    double gapNeedingFood = awaySeconds - alreadyFed;
+                    int neededEats = (int)Math.Ceiling(gapNeedingFood / fedDuration);
+
+                    eaten = ConsumeNearbyFood(__instance, mai, neededEats);
+                    covered = Math.Min(awaySeconds, alreadyFed + eaten * (double)fedDuration);
+
+                    // Real history predates whatever we just fed it - if that
+                    // bridged the entire gap, the stored feeding time is
+                    // stale and would read hungry a moment from now purely
+                    // because we didn't also move it forward. If it DIDN'T
+                    // bridge the whole gap, the real stale timestamp already
+                    // (correctly) reads hungry on its own - leave it be.
+                    if (eaten > 0 && covered >= awaySeconds - 0.01)
+                        zdo.Set(ZDOVars.s_tameLastFeeding, nowTicks);
+                }
+
+                if (covered <= 0) return;
 
                 float remaining = zdo.GetFloat(ZDOVars.s_tameTimeLeft, __instance.m_tamingTime);
-                remaining = Mathf.Max(0f, remaining - (float)credit);
+                remaining = Mathf.Max(0f, remaining - (float)covered);
                 zdo.Set(ZDOVars.s_tameTimeLeft, remaining);
 
                 // Deliberately not calling Tame() here even if remaining hit
@@ -88,9 +118,60 @@ namespace CreatureControl
 
                 if (Plugin.Verbose)
                     Plugin.Log.LogInfo(
-                        $"[CC tame-catchup] {__instance.name}: credited {credit:0}s away " +
-                        $"(of {awaySeconds:0}s), {remaining:0}s taming left.");
+                        $"[CC tame-catchup] {__instance.name}: away {awaySeconds:0}s, ate " +
+                        $"{eaten} item(s), credited {covered:0}s, {remaining:0}s taming left.");
             }
+        }
+
+        /// <summary>
+        /// Replays MonsterAI.UpdateConsumeItem's search-and-eat loop up to
+        /// <paramref name="maxEats"/> times, using the creature's own
+        /// m_consumeItems/m_consumeSearchRange, and actually removes what it
+        /// eats via ItemDrop.RemoveOne - the same call vanilla itself makes,
+        /// so stack counts, network sync and despawn-when-empty all behave
+        /// exactly as if it had eaten them for real. Movement and pathing are
+        /// deliberately not simulated: over any gap long enough for this to
+        /// matter, a real MonsterAI would have had ample time to walk the few
+        /// metres from itself to food already within its search range.
+        /// </summary>
+        static int ConsumeNearbyFood(Tameable tameable, MonsterAI mai, int maxEats)
+        {
+            if (maxEats <= 0) return 0;
+            var consumeItems = mai.m_consumeItems;
+            if (consumeItems == null || consumeItems.Count == 0) return 0;
+
+            if (_itemMask < 0) _itemMask = LayerMask.GetMask("item");
+
+            int count = Physics.OverlapSphereNonAlloc(
+                tameable.transform.position, mai.m_consumeSearchRange, _hits, _itemMask);
+
+            int eaten = 0;
+            for (int i = 0; i < count && eaten < maxEats; i++)
+            {
+                var rb = _hits[i].attachedRigidbody;
+                if (rb == null) continue;
+                var drop = rb.GetComponent<ItemDrop>();
+                if (drop == null) continue;
+                var dropView = drop.GetComponent<ZNetView>();
+                if (dropView == null || !dropView.IsValid()) continue;
+                if (!Matches(consumeItems, drop.m_itemData)) continue;
+
+                int stackHere = drop.m_itemData.m_stack;
+                for (int n = 0; n < stackHere && eaten < maxEats; n++)
+                {
+                    if (!drop.RemoveOne()) break;
+                    eaten++;
+                }
+            }
+            return eaten;
+        }
+
+        static bool Matches(List<ItemDrop> consumeItems, ItemDrop.ItemData item)
+        {
+            foreach (var c in consumeItems)
+                if (c != null && c.m_itemData != null && c.m_itemData.m_shared.m_name == item.m_shared.m_name)
+                    return true;
+            return false;
         }
     }
 }
