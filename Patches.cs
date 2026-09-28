@@ -264,6 +264,31 @@ namespace CreatureControl
         }
     }
 
+    /// <summary>
+    /// Diagnostic only. SetTargetInfo is called at the very end of vanilla's
+    /// own UpdateTarget every single tick - both when it lands on a target
+    /// and when it clears one - so this is a tick-by-tick trace with no
+    /// sampling gap, unlike the periodic [CC target] heartbeat. Answers
+    /// directly whether the target ever goes non-null even for an instant,
+    /// or whether vanilla's own tick never gets that far at all (which would
+    /// point at another mod's prefix - BetterTames included - skipping the
+    /// original method outright rather than anything in this mod).
+    /// </summary>
+    [HarmonyPatch(typeof(BaseAI), "SetTargetInfo")]
+    static class Patch_BaseAI_SetTargetInfo_Diag
+    {
+        static void Postfix(BaseAI __instance, ZDOID targetID)
+        {
+            if (!Plugin.Verbose) return;
+            var st = CreatureState.For(__instance);
+            if (st == null || !st.EnrageConfigured) return;
+
+            Plugin.Log.LogInfo(
+                $"[CC tick] {st.Prefab}: vanilla's own target = " +
+                $"{(targetID.IsNone() ? "none" : targetID.ToString())}");
+        }
+    }
+
     // ------------------------------------------------------------------- fear
 
     /// <summary>
