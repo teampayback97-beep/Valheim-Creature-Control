@@ -4,15 +4,15 @@ using UnityEngine;
 namespace CreatureControl
 {
     /// <summary>
-    /// STATUS: best-effort. The animator triggers below are guesses, not
-    /// confirmed against any creature's real Animator Controller - that data
-    /// lives in Unity asset bundles, not in assembly_valheim.dll, so there is
-    /// no way to check from source whether any of them exist on a given
-    /// creature. Each is wrapped so a miss changes nothing. The scale-pulse +
-    /// emission tint below it needs no animation asset at all and is the
-    /// actual guaranteed cue; treat the trigger attempts as a free bonus, not
-    /// the primary mechanism, and verify _EmissionColor is actually the right
-    /// shader property for whichever creature's material you test this on.
+    /// STATUS: "attack_taunt" is confirmed against Bjorn's real
+    /// Bjorn_animator.controller (extracted via AssetRipper) - it's a real
+    /// trigger parameter and plays the real "Taunt.anim" clip. Other
+    /// creatures aren't confirmed yet and may not have this trigger at all,
+    /// so it's still wrapped in a try/catch and treated as a bonus, not a
+    /// requirement. The scale-pulse + emission tint below it needs no
+    /// animation asset at all and is the actual guaranteed cue; verify
+    /// _EmissionColor is the right shader property for whichever creature's
+    /// material you test this on.
     ///
     /// Cosmetic only - CreatureState.ApplyEnrageEffects/RemoveEnrageEffects
     /// own the actual resistances/threat/damage; this is purely what the
@@ -20,10 +20,10 @@ namespace CreatureControl
     /// </summary>
     internal static class EnrageCue
     {
-        // Guesses only. Most creatures will have none of these - that's
-        // fine, this is layered underneath the guaranteed fallback below,
-        // never a requirement for the mechanic to work.
-        static readonly string[] BestEffortTriggers = { "rear", "roar", "enrage", "taunt", "scream" };
+        // "attack_taunt" is Bjorn's real trigger name (confirmed from
+        // Bjorn_animator.controller). Left as a list in case other
+        // creatures use a different name for their equivalent taunt/roar.
+        static readonly string[] BestEffortTriggers = { "attack_taunt" };
 
         public static void Play(CreatureState st)
         {
