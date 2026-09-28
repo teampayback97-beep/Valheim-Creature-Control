@@ -480,8 +480,29 @@ namespace CreatureControl
         /// else asking it the same question - nothing about Band.cs itself
         /// is touched or special-cased here.
         /// </summary>
+        float _nextDiagLog;
+
         public void ReevaluateEnrage(Character target)
         {
+            // A steady heartbeat, independent of every other timer here -
+            // exactly what target this creature currently holds, whether
+            // it's mid-attack, and how far the target is. Answers "is it
+            // even trying to fight anything" directly instead of having to
+            // infer it from Band's own logging, which only ever shows OTHER
+            // creatures' side of a fight, never this creature's own target.
+            if (Plugin.Verbose && Time.time >= _nextDiagLog)
+            {
+                _nextDiagLog = Time.time + 3f;
+                string targetName = target == null ? "none"
+                    : (target is Player ? "Player" : target.name);
+                float dist = target != null && Chr != null
+                    ? Vector3.Distance(Chr.transform.position, target.transform.position)
+                    : -1f;
+                Plugin.Log.LogInfo(
+                    $"[CC target] {Prefab}: target={targetName} dist={dist:0.#} " +
+                    $"inAttack={(Chr != null && Chr.InAttack())} enraged={_enraged}");
+            }
+
             if (!EnrageConfigured || Chr == null)
             {
                 if (_enraged) SetEnraged(false);

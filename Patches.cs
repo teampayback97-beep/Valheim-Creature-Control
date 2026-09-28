@@ -254,6 +254,11 @@ namespace CreatureControl
 
             if (!st.SensesGuardThreat(target)) return true;
 
+            if (Plugin.Verbose)
+                Plugin.Log.LogInfo(
+                    $"[CC guard] {st.Prefab} senses {(target is Player ? "Player" : target.name)} " +
+                    $"early (targeting a player or {st.Prefab} within guardRadius).");
+
             __result = true;
             return false;
         }
