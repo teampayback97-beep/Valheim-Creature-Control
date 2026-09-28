@@ -265,6 +265,45 @@ namespace CreatureControl
     }
 
     /// <summary>
+    /// Guard's other half. CanSenseTarget only ever gets asked ONCE, inside
+    /// FindEnemy(), to decide whether a creature is even eligible to become
+    /// the target in the first place. Every tick AFTER that, vanilla asks a
+    /// completely different pair of methods - CanHearTarget/CanSeeTarget -
+    /// whether it can still perceive the target it already has, and THAT
+    /// answer is what actually gates chasing and attacking. Without this,
+    /// Guard hands a tame a target its own senses can't back up, and every
+    /// tick afterward vanilla falls back to idling at the target's last
+    /// known position instead of closing in - which looks exactly like
+    /// standing there doing nothing while the real threat is understood
+    /// (the acquisition succeeded) but never acted on.
+    /// </summary>
+    [HarmonyPatch(typeof(BaseAI), nameof(BaseAI.CanHearTarget), typeof(Character))]
+    static class Patch_BaseAI_CanHearTarget_Guard
+    {
+        static bool Prefix(BaseAI __instance, Character target, ref bool __result)
+        {
+            if (target == null) return true;
+            var st = CreatureState.For(__instance);
+            if (st == null || !st.GuardConfigured || !st.SensesGuardThreat(target)) return true;
+            __result = true;
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(BaseAI), nameof(BaseAI.CanSeeTarget), typeof(Character))]
+    static class Patch_BaseAI_CanSeeTarget_Guard
+    {
+        static bool Prefix(BaseAI __instance, Character target, ref bool __result)
+        {
+            if (target == null) return true;
+            var st = CreatureState.For(__instance);
+            if (st == null || !st.GuardConfigured || !st.SensesGuardThreat(target)) return true;
+            __result = true;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Diagnostic only. SetTargetInfo is called at the very end of vanilla's
     /// own UpdateTarget every single tick - both when it lands on a target
     /// and when it clears one - so this is a tick-by-tick trace with no
