@@ -122,12 +122,11 @@ namespace CreatureControl
         /// prefab, regardless of the numbers - two of the same apex predator
         /// meeting is a territorial fight, not an arithmetic one.</summary>
         public bool? EnrageVsSameKind;
-        /// <summary>Threat bonus while enraged, randomised once per trigger
-        /// between these two - makes the creature read as more dangerous to
-        /// everything ELSE weighing a fight against it, not just harder to
-        /// kill.</summary>
-        public float? EnrageThreatBonusMin;
-        public float? EnrageThreatBonusMax;
+        /// <summary>Flat threat bonus while enraged - added on top of the
+        /// base Threat value, not randomised. Makes the creature read as
+        /// more dangerous to everything ELSE weighing a fight against it,
+        /// not just harder to kill.</summary>
+        public float? EnrageThreatBonus;
         /// <summary>Resistance level applied to blunt/slash/pierce while
         /// enraged (see HitData.DamageModifier - Resistant, VeryResistant,
         /// etc). Null leaves physical resistance untouched.</summary>
@@ -178,8 +177,7 @@ namespace CreatureControl
             if (!LoggingMode.HasValue) LoggingMode = lower.LoggingMode;
             if (!EnrageWhenOutnumbered.HasValue) EnrageWhenOutnumbered = lower.EnrageWhenOutnumbered;
             if (!EnrageVsSameKind.HasValue) EnrageVsSameKind = lower.EnrageVsSameKind;
-            if (!EnrageThreatBonusMin.HasValue) EnrageThreatBonusMin = lower.EnrageThreatBonusMin;
-            if (!EnrageThreatBonusMax.HasValue) EnrageThreatBonusMax = lower.EnrageThreatBonusMax;
+            if (!EnrageThreatBonus.HasValue) EnrageThreatBonus = lower.EnrageThreatBonus;
             if (!EnragePhysicalResist.HasValue) EnragePhysicalResist = lower.EnragePhysicalResist;
             if (!EnragePoisonImmune.HasValue) EnragePoisonImmune = lower.EnragePoisonImmune;
             if (!EnrageDamageMult.HasValue) EnrageDamageMult = lower.EnrageDamageMult;
@@ -232,7 +230,7 @@ namespace CreatureControl
             !SharesFear.HasValue &&
             !StanceCycling.HasValue && !LoggingMode.HasValue && !FactionId.HasValue &&
             !EnrageWhenOutnumbered.HasValue && !EnrageVsSameKind.HasValue &&
-            !EnrageThreatBonusMin.HasValue && !EnrageThreatBonusMax.HasValue &&
+            !EnrageThreatBonus.HasValue &&
             !EnragePhysicalResist.HasValue && !EnragePoisonImmune.HasValue && !EnrageDamageMult.HasValue &&
             !MinAttackInterval.HasValue && !CircleTargetInterval.HasValue && !CirculateWhileCharging.HasValue &&
             !FireFear.HasValue && !FireReact.HasValue && !FireBuffer.HasValue &&

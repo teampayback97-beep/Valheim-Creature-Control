@@ -517,13 +517,12 @@ namespace CreatureControl
                         else Warn(l, $"expected true/false, got '{l.Value}'");
                         break;
 
-                    case "enragethreatbonusmin":
-                        if (F(l.Value, out var etbmin)) rule.EnrageThreatBonusMin = etbmin;
-                        else WarnNum(l);
-                        break;
-
-                    case "enragethreatbonusmax":
-                        if (F(l.Value, out var etbmax)) rule.EnrageThreatBonusMax = etbmax;
+                    case "enragethreatbonus":
+                        if (F(l.Value, out var etb))
+                        {
+                            if (etb < 0f) Warn(l, $"enrageThreatBonus cannot be negative; got {etb}");
+                            else rule.EnrageThreatBonus = etb;
+                        }
                         else WarnNum(l);
                         break;
 
@@ -670,8 +669,8 @@ namespace CreatureControl
 #    enrageWhenOutnumbered   true | false - opts in
 #    enrageVsSameKind        true | false - also enrages against its own
 #                            prefab regardless of the numbers (territorial)
-#    enrageThreatBonusMin/Max   how much MORE dangerous it reads to everything
-#                            else while enraged, randomised once per trigger
+#    enrageThreatBonus       flat amount added to Threat while enraged - how
+#                            much MORE dangerous it reads to everything else
 #    enragePhysicalResist    Normal|Resistant|VeryResistant|SlightlyResistant|
 #                            Weak|VeryWeak|SlightlyWeak|Immune|Ignore
 #                            - applied to blunt/slash/pierce while enraged
@@ -701,8 +700,7 @@ circleTargetInterval   = 0
 circulateWhileCharging = false
 enrageWhenOutnumbered  = true
 enrageVsSameKind       = true
-enrageThreatBonusMin   = 3
-enrageThreatBonusMax   = 8
+enrageThreatBonus      = 3
 enragePhysicalResist   = Resistant
 enragePoisonImmune     = true
 enrageDamageMult       = 1.3

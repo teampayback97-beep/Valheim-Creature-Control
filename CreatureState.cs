@@ -488,10 +488,7 @@ namespace CreatureControl
             if (Rule.EnragePoisonImmune == true) mods.m_poison = HitData.DamageModifier.Immune;
             Chr.m_damageModifiers = mods;
 
-            float lo = Rule.EnrageThreatBonusMin ?? 3f;
-            float hi = Rule.EnrageThreatBonusMax ?? 8f;
-            if (hi < lo) hi = lo;
-            _enrageThreatBonus = Random.Range(lo, hi);
+            _enrageThreatBonus = Rule.EnrageThreatBonus ?? 3f;
 
             EnrageCue.Play(this);
 
