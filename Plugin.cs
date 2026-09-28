@@ -65,6 +65,7 @@ namespace CreatureControl
         static ConfigEntry<bool> _birchSeeds;
         static ConfigEntry<float> _tamedRegen;
         static ConfigEntry<bool> _tameStructures;
+        static ConfigEntry<bool> _offlineTaming;
 
         static ConfigEntry<bool> _phaseOn;
         static ConfigEntry<bool> _stalkOn;
@@ -173,6 +174,7 @@ namespace CreatureControl
         public static bool BirchKeepSeeds => _birchSeeds != null && _birchSeeds.Value;
         public static float TamedRegenMultiplier => _tamedRegen == null ? 1f : _tamedRegen.Value;
         public static bool TamesSpareStructures => _tameStructures == null || _tameStructures.Value;
+        public static bool OfflineTamingEnabled => _offlineTaming == null || _offlineTaming.Value;
 
         // The old single player score (base + sqrt(armor), capped at 2.8) is
         // gone deliberately. It could only ever produce ONE number, and the
@@ -471,6 +473,14 @@ namespace CreatureControl
                 "Stops your tamed creatures damaging anything YOU built - no more stray swings " +
                 "knocking holes in your walls. They can still hit trees, rocks and everything " +
                 "else in the world exactly as before; this only shields player-built pieces.");
+            _offlineTaming = Config.Bind("Taming", "Credit Taming Progress While Away", true,
+                "Vanilla's own taming timer only runs while the creature is actually loaded - leave " +
+                "the zone and it just stops, with no memory of how long you were gone. This " +
+                "retroactively credits that time when you come back, capped at however long the " +
+                "creature would genuinely have stayed fed for - a short trip resumes seamlessly, a " +
+                "long one leaves it hungry exactly where it would have gone hungry anyway, never " +
+                "further ahead than if you had stood there the whole time. Applies to every " +
+                "tameable creature in the game, vanilla or modded.");
 
             _loggingOn = Config.Bind("Logging", "Enable Troll Logging", true,
                 "Master switch for the Troll Logging Leash feature. Off leaves the hotkey and " +
