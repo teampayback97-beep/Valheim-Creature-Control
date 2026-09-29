@@ -351,13 +351,41 @@ namespace CreatureControl
     {
         static void Postfix(BaseAI __instance, ZDOID targetID)
         {
-            if (!Plugin.Verbose) return;
+            if (!Plugin.Verbose || !Plugin.TargetTickDiagEnabled) return;
             var st = CreatureState.For(__instance);
             if (st == null || !st.EnrageConfigured) return;
 
             Plugin.Log.LogInfo(
                 $"[CC tick] {st.Prefab}: vanilla's own target = " +
                 $"{(targetID.IsNone() ? "none" : targetID.ToString())}");
+        }
+    }
+
+    /// <summary>
+    /// Diagnostic only. BaseAI.IsEnemy is the single choke point Attack.cs's
+    /// hit loops (checkHits for AoE, DoMeleeAttack for the raycast fan) call
+    /// per potential target to decide whether a TAMED attacker's swing
+    /// actually damages that target - a wild attacker with a hit-friendly
+    /// weapon skips this check entirely and just hits everyone, which is
+    /// exactly why a troll's slam can behave differently once tamed. Logs
+    /// every call where the comparer is a tamed creature, so a swing that
+    /// looks like it only hit one enemy can be checked against what the game
+    /// actually decided for every character caught in it.
+    /// </summary>
+    [HarmonyPatch(typeof(BaseAI), nameof(BaseAI.IsEnemy), typeof(Character), typeof(Character))]
+    static class Patch_BaseAI_IsEnemy_Diag
+    {
+        static void Postfix(Character a, Character b, bool __result)
+        {
+            if (!Plugin.Verbose || !Plugin.EnemyCheckDiagEnabled) return;
+            if (a == null || !a.IsTamed() || b == null) return;
+
+            var bAi = b.GetBaseAI();
+            Plugin.Log.LogInfo(
+                $"[CC enemy-check] {a.name} vs {b.name}: enemy={__result} | " +
+                $"a: tamed={a.IsTamed()} faction={a.GetFaction()} | " +
+                $"b: tamed={b.IsTamed()} faction={b.GetFaction()} " +
+                $"aggravated={(bAi != null && bAi.IsAggravated())}");
         }
     }
 

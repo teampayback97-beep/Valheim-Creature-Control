@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
@@ -75,52 +76,80 @@ namespace CreatureControl
                 double sinceFedAtDeparture = new TimeSpan(lastSeenTicks - lastFedTicks).TotalSeconds;
                 double stillFedFor = fedDuration - sinceFedAtDeparture;
 
-                double covered;
-                int eaten = 0;
-
                 if (awaySeconds <= stillFedFor)
                 {
-                    // Was never going to go hungry during the whole gap -
-                    // nothing needed to eat anything for this to hold.
-                    covered = awaySeconds;
-                }
-                else
-                {
-                    double alreadyFed = Math.Max(0, stillFedFor);
-                    double gapNeedingFood = awaySeconds - alreadyFed;
-                    int neededEats = (int)Math.Ceiling(gapNeedingFood / fedDuration);
-
-                    eaten = ConsumeNearbyFood(__instance, mai, neededEats);
-                    covered = Math.Min(awaySeconds, alreadyFed + eaten * (double)fedDuration);
-
-                    // Real history predates whatever we just fed it - if that
-                    // bridged the entire gap, the stored feeding time is
-                    // stale and would read hungry a moment from now purely
-                    // because we didn't also move it forward. If it DIDN'T
-                    // bridge the whole gap, the real stale timestamp already
-                    // (correctly) reads hungry on its own - leave it be.
-                    if (eaten > 0 && covered >= awaySeconds - 0.01)
-                        zdo.Set(ZDOVars.s_tameLastFeeding, nowTicks);
+                    // Was never going to go hungry during the whole gap - no
+                    // food needed, so no physics scan and no race to worry
+                    // about. Credit it right now.
+                    Credit(zdo, __instance, awaySeconds, awaySeconds, eaten: 0, nowTicks, bumpFeeding: false);
+                    return;
                 }
 
-                if (covered <= 0) return;
-
-                float remaining = zdo.GetFloat(ZDOVars.s_tameTimeLeft, __instance.m_tamingTime);
-                remaining = Mathf.Max(0f, remaining - (float)covered);
-                zdo.Set(ZDOVars.s_tameTimeLeft, remaining);
-
-                // Deliberately not calling Tame() here even if remaining hit
-                // 0 - Awake() already scheduled TamingUpdate 3s out (same
-                // InvokeRepeating vanilla always starts), and that tick's own
-                // GetRemainingTime() <= 0 check finishes the job with all of
-                // vanilla's normal side effects (message, effects, MakeTame).
-                // Duplicating that here would just be racing it.
-
-                if (Plugin.Verbose)
-                    Plugin.Log.LogInfo(
-                        $"[CC tame-catchup] {__instance.name}: away {awaySeconds:0}s, ate " +
-                        $"{eaten} item(s), credited {covered:0}s, {remaining:0}s taming left.");
+                // Needs food, which means a physics scan for nearby items.
+                // Tameable.Awake fires the instant THIS creature's own
+                // sector finishes loading, with no guarantee a neighbouring
+                // sector the food pile sits in has finished too - scanning
+                // right now can find nothing even though the pile is sitting
+                // right there, because its GameObjects simply don't exist
+                // yet. Deferring the scan a few seconds gives that neighbour
+                // time to load, same reasoning as vanilla scheduling its own
+                // TamingUpdate 3s out rather than running it inline here.
+                __instance.StartCoroutine(
+                    DeferredConsume(__instance, mai, zdo, awaySeconds, stillFedFor, fedDuration, nowTicks));
             }
+        }
+
+        static IEnumerator DeferredConsume(
+            Tameable tameable, MonsterAI mai, ZDO zdo,
+            double awaySeconds, double stillFedFor, float fedDuration, long nowTicks)
+        {
+            yield return new WaitForSeconds(Plugin.OfflineTamingScanDelay);
+
+            // Re-check rather than trust state from several seconds ago - the
+            // creature could have been tamed, killed, or picked a real fight
+            // in the meantime.
+            if (tameable == null || tameable.IsTamed()) yield break;
+            if (mai == null || mai.IsAlerted()) yield break;
+
+            double alreadyFed = Math.Max(0, stillFedFor);
+            double gapNeedingFood = awaySeconds - alreadyFed;
+            int neededEats = (int)Math.Ceiling(gapNeedingFood / fedDuration);
+
+            int eaten = ConsumeNearbyFood(tameable, mai, neededEats);
+            double covered = Math.Min(awaySeconds, alreadyFed + eaten * (double)fedDuration);
+
+            // Real history predates whatever we just fed it - if that
+            // bridged the entire gap, the stored feeding time is stale and
+            // would read hungry a moment from now purely because we didn't
+            // also move it forward. If it DIDN'T bridge the whole gap, the
+            // real stale timestamp already (correctly) reads hungry on its
+            // own - leave it be.
+            bool bumpFeeding = eaten > 0 && covered >= awaySeconds - 0.01;
+            Credit(zdo, tameable, awaySeconds, covered, eaten, nowTicks, bumpFeeding);
+        }
+
+        static void Credit(
+            ZDO zdo, Tameable tameable, double awaySeconds, double covered,
+            int eaten, long nowTicks, bool bumpFeeding)
+        {
+            if (bumpFeeding) zdo.Set(ZDOVars.s_tameLastFeeding, nowTicks);
+            if (covered <= 0) return;
+
+            float remaining = zdo.GetFloat(ZDOVars.s_tameTimeLeft, tameable.m_tamingTime);
+            remaining = Mathf.Max(0f, remaining - (float)covered);
+            zdo.Set(ZDOVars.s_tameTimeLeft, remaining);
+
+            // Deliberately not calling Tame() here even if remaining hit 0 -
+            // Awake() already scheduled TamingUpdate 3s out (same
+            // InvokeRepeating vanilla always starts), and that tick's own
+            // GetRemainingTime() <= 0 check finishes the job with all of
+            // vanilla's normal side effects (message, effects, MakeTame).
+            // Duplicating that here would just be racing it.
+
+            if (Plugin.Verbose)
+                Plugin.Log.LogInfo(
+                    $"[CC tame-catchup] {tameable.name}: away {awaySeconds:0}s, ate " +
+                    $"{eaten} item(s), credited {covered:0}s, {remaining:0}s taming left.");
         }
 
         /// <summary>
@@ -168,10 +197,38 @@ namespace CreatureControl
 
         static bool Matches(List<ItemDrop> consumeItems, ItemDrop.ItemData item)
         {
+            // m_pickedUp is vanilla's own permanent per-item flag - false on
+            // anything freshly spawned (a kill's loot, a container's
+            // contents) and set true forever the instant it enters ANY
+            // player's inventory (Player.OnInventoryChanged), surviving
+            // drop/pickup and stacking since it travels with the ItemData
+            // through Save/Load. Requiring it here means offline catch-up
+            // can only ever credit food a player actually carried and placed
+            // - never food a creature stumbled onto on its own, like a boar's
+            // own meat drop lying where it died.
+            if (Plugin.RequirePlayerHandledTamingFood && !item.m_pickedUp) return false;
+
             foreach (var c in consumeItems)
                 if (c != null && c.m_itemData != null && c.m_itemData.m_shared.m_name == item.m_shared.m_name)
                     return true;
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Same provenance rule as OfflineTaming.Matches, applied to vanilla's
+    /// own LIVE self-taming loop so a wild creature can't start (or
+    /// continue) taming itself off food it happened to wander onto - only
+    /// food a player has actually carried counts, whether the creature is
+    /// loaded or not.
+    /// </summary>
+    [HarmonyPatch(typeof(MonsterAI), "CanConsume")]
+    static class Patch_MonsterAI_CanConsume_RequireHandled
+    {
+        static void Postfix(ItemDrop.ItemData item, ref bool __result)
+        {
+            if (__result && Plugin.RequirePlayerHandledTamingFood && !item.m_pickedUp)
+                __result = false;
         }
     }
 }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -1065,11 +1066,75 @@ namespace CreatureControl
         public Vector3 LogTargetPos;
         public float ChopTimer;
 
-        /// <summary>Single carry slot: one item type, one count. See
-        /// TrollLogging.cs for why this is deliberately not a real inventory.</summary>
-        public string CarryItem;
-        public int CarryCount;
-        public bool HasCarry => !string.IsNullOrEmpty(CarryItem) && CarryCount > 0;
+        /// <summary>Time.time the troll first found itself too far from its
+        /// CURRENT chop target to hit it, or -1 while it isn't stuck. Reset
+        /// whenever LogTargetTree changes or it arrives - see
+        /// TrollLogging.DriveChop's 30s teleport-to-leash failsafe.</summary>
+        public float ChopApproachSince = -1f;
+
+        /// <summary>The object that most recently stranded this troll long
+        /// enough to trigger the stuck-teleport failsafe, and how long it
+        /// stays excluded from FindNearestTree - see TrollLogging.DriveChop.
+        /// Without this, teleporting off an unreachable target and then
+        /// immediately re-picking that same "nearest" object produced an
+        /// endless walk -> stuck -> teleport loop, confirmed live.</summary>
+        public GameObject StuckTarget;
+        public float StuckUntil = -1f;
+
+        /// <summary>The STANDING tree's own prefab name, captured the moment
+        /// it's first picked and carried through the whole fell -> log ->
+        /// stump chain, since LogTargetTree itself gets reassigned at each
+        /// stage. Null if the current chain didn't start from a TreeBase at
+        /// all (picked up mid-chain, or it's a rock) - nothing to replant in
+        /// that case. See ReplantMapping / TrollLogging.TryReplant.</summary>
+        public string OriginalTreeName;
+
+        /// <summary>Where THIS chain's job started - captured once, alongside
+        /// OriginalTreeName, and never touched again. Successor search
+        /// anchors here, not LogTargetPos: a chain that anchored to wherever
+        /// the LAST piece ended up would drift outward with every hop (logs
+        /// scatter away from their own trunk), and in a dense forest that
+        /// drift eventually reaches an entirely DIFFERENT tree's remains -
+        /// confirmed live in the log, chains hopping "beech_log_half" ->
+        /// "Birch_log" -> "beech_log_half" across 20+ metres. Anchoring to
+        /// the fixed origin keeps the search radius meaningful for the whole
+        /// chain, including finally finding the stump.</summary>
+        public Vector3 OriginalTreePos;
+
+        /// <summary>Time.time the troll first found nothing left to chop
+        /// inside its leash while still holding something, or -1 otherwise.
+        /// See TrollLogging.DriveWork's idle-dump failsafe - it won't hoard
+        /// a full inventory forever just because there's nothing left to cut
+        /// down right now.</summary>
+        public float IdleSince = -1f;
+
+        /// <summary>One-shot: sends the NEXT deposit past this named-storage
+        /// filtering entirely (see StorageNaming.Accepts), for the idle-dump
+        /// failsafe emptying into whatever chest is nearest regardless of
+        /// name. Consumed and cleared by TrollLogging.Deposit.</summary>
+        public bool ForceDeposit;
+
+        /// <summary>The chest a deposit trip already committed to walking
+        /// toward, or null between trips. Kept separate from re-searching
+        /// every tick so a trip in progress doesn't retarget mid-walk.</summary>
+        public GameObject DepositTarget;
+        /// <summary>Time.time the troll first found itself too far from
+        /// DepositTarget to reach it, or -1 while it isn't stuck. See
+        /// TrollLogging.DriveDeposit's 30s remote-deposit failsafe.</summary>
+        public float DepositApproachSince = -1f;
+
+        /// <summary>One reserved slot per distinct tree/ore drop item (see
+        /// TreeDropCatalog) - keyed by item prefab name, each independent of
+        /// the others, so picking up Resin can never block picking up Wood.</summary>
+        public readonly Dictionary<string, int> Carry = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        public bool HasCarry => Carry.Count > 0;
+
+        /// <summary>Time.time combat was last genuinely observed (raw
+        /// GetTargetCreature()/IsAlerted(), before the grace window) - -1 if
+        /// it's never been seen in combat at all. See TrollLogging.DriveTick,
+        /// which reads this to smooth over vanilla's own target signal
+        /// dropping out for a tick or two mid-fight.</summary>
+        public float LastCombatSignalAt = -1f;
 
         /// <summary>Time.time a logging troll's combat last cleared, or -1
         /// while it is still fighting. Read by TrollLogging.DriveReturn to
@@ -1085,13 +1150,33 @@ namespace CreatureControl
         public float SecondsSinceCombatCleared =>
             _combatClearedAt < 0f ? 0f : Time.time - _combatClearedAt;
 
-        /// <summary>Drops the current tree/chop timer, but keeps the bind and
-        /// the carry slot - a troll pulled off a tree by combat should not lose
-        /// the wood it is already holding.</summary>
+        /// <summary>Puts logging work down for a TEMPORARY interruption
+        /// (combat) - unlike ForgetLoggingWork, this keeps LogTargetTree,
+        /// LogTargetPos and OriginalTreeName exactly as they were, so the
+        /// troll resumes the very same tree/log/stump once it's clear rather
+        /// than picking something new and losing track of what it already
+        /// started. Only the timers reset, so neither the chop-approach nor
+        /// deposit-approach stuck-clock counts the interruption itself
+        /// against its 30s budget.</summary>
+        public void PauseLoggingWork()
+        {
+            ChopTimer = 0f;
+            ChopApproachSince = -1f;
+            DepositApproachSince = -1f;
+        }
+
+        /// <summary>Drops the current tree/chop timer AND the species memory -
+        /// only for when the job is actually over (the chain fully cleared
+        /// and replanted, or it got stranded and had to be teleported off an
+        /// unreachable target). Keeps the bind and the carry slot - a troll
+        /// pulled off its work should not lose the wood it is already
+        /// holding.</summary>
         public void ForgetLoggingWork()
         {
             LogTargetTree = null;
+            OriginalTreeName = null;
             ChopTimer = 0f;
+            ChopApproachSince = -1f;
         }
 
         /// <summary>Full reset: called when logging is toggled off, or the
@@ -1100,8 +1185,14 @@ namespace CreatureControl
         {
             ForgetLoggingWork();
             BoundLeash = null;
-            CarryItem = null;
-            CarryCount = 0;
+            Carry.Clear();
+            DepositTarget = null;
+            DepositApproachSince = -1f;
+            IdleSince = -1f;
+            ForceDeposit = false;
+            LastCombatSignalAt = -1f;
+            StuckTarget = null;
+            StuckUntil = -1f;
             _combatClearedAt = -1f;
         }
 
@@ -1208,7 +1299,7 @@ namespace CreatureControl
             if (!ModeOverridden) RefreshFromRule();
             Apply();
 
-            if (Plugin.Verbose)
+            if (Plugin.Verbose && Plugin.CreatureSpawnLogEnabled)
                 Plugin.Log.LogInfo(
                     $"[CC] {Prefab} <{FactionRegistry.NameOf((int)Chr.m_faction)}> " +
                     $"ai={(Mai != null ? "MonsterAI" : "AnimalAI")} " +

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace CreatureControl
@@ -226,6 +227,15 @@ namespace CreatureControl
 
         // ----------------------------------------------------------- chests
 
+        /// <summary>True for a real, placed-in-the-world chest - false for a
+        /// live Container another mod spawns for its own purposes (a
+        /// backpack mod's proxy container representing a player's worn
+        /// backpack, confirmed live in the log: "AB_BackpackProxy" was the
+        /// nearest unnamed Container in range and silently absorbed every
+        /// deposit that didn't match a named chest). Every real placed piece
+        /// carries a Piece component; a dynamically-spawned proxy does not.</summary>
+        static bool IsRealChest(Container c) => c.GetComponent<Piece>() != null;
+
         /// <summary>Nearest vanilla Container within the SAME leash's radius -
         /// measured from the leash, not the troll, so a chest at the far edge
         /// of the radius still counts even while the troll is elsewhere
@@ -244,7 +254,7 @@ namespace CreatureControl
             for (int i = 0; i < all.Length; i++)
             {
                 var c = all[i];
-                if (c == null) continue;
+                if (c == null || !IsRealChest(c)) continue;
                 var go = c.gameObject;
                 if (go == null) continue;
 
@@ -252,6 +262,88 @@ namespace CreatureControl
                 if (sq > rSq) continue;
                 if (sq < bestSq) { bestSq = sq; best = go; }
             }
+            return best;
+        }
+
+        /// <summary>Same search, but a chest the player named (see
+        /// StorageNaming) that matches one of the troll's carried items wins
+        /// over any distance comparison against an unnamed one - a dedicated
+        /// destination beats "merely closer". Only when no named match exists
+        /// at all does this fall back to the nearest unnamed (catch-all)
+        /// chest, exactly like FindNearestChest above.</summary>
+        public static GameObject FindDepositChest(Vector3 leashPos, IEnumerable<string> carriedItems)
+        {
+            var all = UnityEngine.Object.FindObjectsByType<Container>(FindObjectsSortMode.None);
+            float rSq = Plugin.LoggingLeashRadius * Plugin.LoggingLeashRadius;
+
+            GameObject bestNamed = null; float bestNamedSq = float.MaxValue;
+            GameObject bestUnnamed = null; float bestUnnamedSq = float.MaxValue;
+
+            for (int i = 0; i < all.Length; i++)
+            {
+                var c = all[i];
+                if (c == null || !IsRealChest(c)) continue;
+                var go = c.gameObject;
+                if (go == null) continue;
+
+                float sq = (go.transform.position - leashPos).sqrMagnitude;
+                if (sq > rSq) continue;
+
+                string storageName = StorageNaming.GetName(c);
+                if (string.IsNullOrEmpty(storageName))
+                {
+                    if (sq < bestUnnamedSq) { bestUnnamedSq = sq; bestUnnamed = go; }
+                    continue;
+                }
+
+                foreach (var item in carriedItems)
+                {
+                    if (StorageNaming.Accepts(storageName, item))
+                    {
+                        if (sq < bestNamedSq) { bestNamedSq = sq; bestNamed = go; }
+                        break;
+                    }
+                }
+            }
+
+            return bestNamed != null ? bestNamed : bestUnnamed;
+        }
+
+        /// <summary>A REAL chest already within <paramref name="range"/> of
+        /// <paramref name="pos"/> right now that accepts at least one of
+        /// <paramref name="items"/> (named match, or unnamed catch-all) -
+        /// used for a passive "walked past a chest" deposit, never as a
+        /// navigation target. Unlike FindDepositChest, this is NOT measured
+        /// from the leash and does not fall back to "nearest regardless of
+        /// distance" - null simply means no chest happens to be close by
+        /// right now.</summary>
+        public static GameObject FindChestWithinRange(Vector3 pos, float range, IEnumerable<string> items)
+        {
+            var all = UnityEngine.Object.FindObjectsByType<Container>(FindObjectsSortMode.None);
+            float rSq = range * range;
+
+            GameObject best = null;
+            float bestSq = float.MaxValue;
+
+            for (int i = 0; i < all.Length; i++)
+            {
+                var c = all[i];
+                if (c == null || !IsRealChest(c)) continue;
+                var go = c.gameObject;
+                if (go == null) continue;
+
+                float sq = (go.transform.position - pos).sqrMagnitude;
+                if (sq > rSq) continue;
+
+                string storageName = StorageNaming.GetName(c);
+                bool accepts = string.IsNullOrEmpty(storageName);
+                if (!accepts)
+                    foreach (var item in items)
+                        if (StorageNaming.Accepts(storageName, item)) { accepts = true; break; }
+
+                if (accepts && sq < bestSq) { bestSq = sq; best = go; }
+            }
+
             return best;
         }
     }

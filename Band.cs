@@ -55,7 +55,7 @@ namespace CreatureControl
             for (int i = 0; i < _band.Count; i++)
                 _band[i].SetBandVerdict(target, backOff, until);
 
-            if (Plugin.Verbose)
+            if (Plugin.Verbose && Plugin.FearTickDiagEnabled)
             {
                 var ai = me.Ai;
                 Plugin.Log.LogInfo(

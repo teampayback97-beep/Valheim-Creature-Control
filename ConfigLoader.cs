@@ -154,12 +154,13 @@ namespace CreatureControl
         public static void LoadAll(string dir)
         {
             var factions = BuildFactions(dir);
-            var creatures = BuildCreatures(dir, factions, out var fires, out var trees);
+            var creatures = BuildCreatures(dir, factions, out var fires, out var trees, out var replant);
 
             FactionRegistry.Install(factions);
             CreatureRules.Install(creatures);
             FireSources.Install(fires);
             TreeSources.Install(trees);
+            ReplantMapping.Install(replant);
 
             Plugin.Log.LogInfo(
                 $"Loaded {creatures.ByPrefab.Count} creature rule(s), " +
@@ -245,11 +246,13 @@ namespace CreatureControl
 
         static CreatureRules.Store BuildCreatures(string dir, FactionRegistry.Store factions,
                                                   out FireSources.Store fires,
-                                                  out TreeSources.Store trees)
+                                                  out TreeSources.Store trees,
+                                                  out ReplantMapping.Store replant)
         {
             var store = new CreatureRules.Store();
             fires = new FireSources.Store();
             trees = new TreeSources.Store();
+            replant = new ReplantMapping.Store();
             var path = Path.Combine(dir, CreaturesFile);
             if (!File.Exists(path)) WriteDefaultCreatures(path);
 
@@ -281,6 +284,21 @@ namespace CreatureControl
                         trees.ByName[l.Key] = loggable;
                     else
                         Warn(l, $"expected true/false, got '{l.Value}'");
+                    continue;
+                }
+
+                // [Replant] maps a standing tree's own prefab name to the
+                // sapling to plant back once a logging troll clears its
+                // stump - see ReplantMapping for why this has to be an
+                // explicit table rather than guessed from the name (several
+                // RtDBiomes species share the same stump/log assets). Entries
+                // here override the mod's own best-effort defaults.
+                if (string.Equals(l.Section, "Replant", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!string.IsNullOrWhiteSpace(l.Value))
+                        replant.ByTreeName[l.Key] = l.Value.Trim();
+                    else
+                        Warn(l, "expected a sapling prefab name, got nothing");
                     continue;
                 }
 

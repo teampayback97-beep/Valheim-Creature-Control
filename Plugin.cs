@@ -61,11 +61,21 @@ namespace CreatureControl
         static ConfigEntry<float> _bandSpread;
         static ConfigEntry<bool> _catalog;
         static ConfigEntry<bool> _squelchLogs;
+        static ConfigEntry<bool> _targetTickDiag;
+        static ConfigEntry<bool> _fearTickDiag;
+        static ConfigEntry<bool> _enemyCheckDiag;
+        static ConfigEntry<bool> _loggingDiag;
+        static ConfigEntry<bool> _creatureSpawnDiag;
         static ConfigEntry<bool> _birchFine;
         static ConfigEntry<bool> _birchSeeds;
+        static ConfigEntry<bool> _cottonWoodDouble;
+        static ConfigEntry<bool> _willowDouble;
+        static ConfigEntry<bool> _oakFineWood;
         static ConfigEntry<float> _tamedRegen;
         static ConfigEntry<bool> _tameStructures;
         static ConfigEntry<bool> _offlineTaming;
+        static ConfigEntry<float> _offlineTamingScanDelay;
+        static ConfigEntry<bool> _requireHandledFood;
 
         static ConfigEntry<bool> _phaseOn;
         static ConfigEntry<bool> _stalkOn;
@@ -85,6 +95,15 @@ namespace CreatureControl
         static ConfigEntry<float> _treeScanInterval;
         static ConfigEntry<float> _leashScanInterval;
         static ConfigEntry<float> _loggingReturnTimeout;
+        static ConfigEntry<float> _successorRadius;
+        static ConfigEntry<float> _dropPickupRadius;
+        static ConfigEntry<float> _passivePickupRadius;
+        static ConfigEntry<float> _stuckTimeout;
+        static ConfigEntry<KeyboardShortcut> _renameStorageKey;
+        static ConfigEntry<bool> _replantEnabled;
+        static ConfigEntry<float> _combatGrace;
+        static ConfigEntry<float> _stuckBlacklist;
+        static ConfigEntry<int> _woodDepositThreshold;
 
         public static bool Verbose => _verbose != null && _verbose.Value;
         public static bool AllowStanceCycling => _cycling == null || _cycling.Value;
@@ -136,6 +155,47 @@ namespace CreatureControl
         public static float LoggingTreeScanInterval => _treeScanInterval == null ? 3f : _treeScanInterval.Value;
         public static float LoggingLeashScanInterval => _leashScanInterval == null ? 5f : _leashScanInterval.Value;
         public static float LoggingReturnTimeout => _loggingReturnTimeout == null ? 30f : _loggingReturnTimeout.Value;
+        /// <summary>How far past a felled tree's trunk to look for the log
+        /// it left behind. A tall tree's log can easily land well past a
+        /// small radius - confirmed live via the logging diagnostic: Birch
+        /// and Beech logs both landed 4.5-7.7m out against an old 4m search.</summary>
+        public static float LoggingSuccessorRadius => _successorRadius == null ? 15f : _successorRadius.Value;
+        public static float LoggingDropPickupRadius => _dropPickupRadius == null ? 15f : _dropPickupRadius.Value;
+        /// <summary>3x vanilla's own Player.m_autoPickupRange (2m) - a troll
+        /// grabs anything it walks near the same way a player does, just at
+        /// a scale that matches its size.</summary>
+        public static float LoggingPassivePickupRadius => _passivePickupRadius == null ? 6f : _passivePickupRadius.Value;
+        /// <summary>Seconds a logging troll is given to close the distance
+        /// on whatever it's currently walking toward - a chop target or a
+        /// deposit chest - before the matching failsafe kicks in (teleport
+        /// to the leash for a chop target, remote deposit for a chest).</summary>
+        public static float LoggingStuckTimeout => _stuckTimeout == null ? 30f : _stuckTimeout.Value;
+        /// <summary>See ReplantMapping - only species listed there (defaults
+        /// plus whatever [Replant] adds) are ever replanted regardless of
+        /// this; it's just the overall on/off switch.</summary>
+        public static bool LoggingReplantEnabled => _replantEnabled == null || _replantEnabled.Value;
+        /// <summary>How long a logging troll keeps treating itself as "in
+        /// combat" after the LAST tick vanilla's own target/alert signal was
+        /// actually seen - smooths over MonsterAI.FindEnemy only refreshing
+        /// every ~2-6s, which otherwise lets that raw signal blip false for a
+        /// tick mid-fight and bounce the troll back into logging behaviour
+        /// while something is still actively attacking it.</summary>
+        public static float LoggingCombatGraceSeconds => _combatGrace == null ? 3f : _combatGrace.Value;
+        /// <summary>How long a target that just stranded a logging troll
+        /// (the DriveChop stuck-teleport failsafe) stays excluded from
+        /// FindNearestTree. Without this, teleporting off an unreachable
+        /// target and immediately re-picking that same "nearest" object was
+        /// confirmed live as an endless walk -> stuck -> teleport loop.</summary>
+        public static float LoggingStuckBlacklistSeconds => _stuckBlacklist == null ? 120f : _stuckBlacklist.Value;
+        /// <summary>Flat threshold (not each item's own max stack) at which a
+        /// wood-tier item (Wood, FineWood, RoundLog, ElderBark, Blackwood,
+        /// Frostwood, YggdrasilWood) gets auto-deposited the moment the troll
+        /// next passes a suitable chest - see TrollLogging.PassiveDepositWood.
+        /// No dedicated trip is ever made for this; it only fires when a
+        /// chest already happens to be nearby.</summary>
+        public static int LoggingWoodDepositThreshold => _woodDepositThreshold == null ? 50 : _woodDepositThreshold.Value;
+        public static string RenameStorageKeyLabel =>
+            _renameStorageKey == null ? "L.Ctrl + R" : _renameStorageKey.Value.ToString();
         public static float StarThreatScale => _starScale == null ? 0.6f : _starScale.Value;
         public static float PetThreatWeight => _petWeight == null ? 0.5f : _petWeight.Value;
         public static float PlayerThreatScale => _playerScale == null ? 1f : _playerScale.Value;
@@ -170,11 +230,58 @@ namespace CreatureControl
         public static float BandMaxSpread => _bandSpread == null ? 60f : _bandSpread.Value;
         public static bool WriteCatalog => _catalog != null && _catalog.Value;
         public static bool SquelchNoisyLogs => _squelchLogs == null || _squelchLogs.Value;
+        /// <summary>Off by default - this is a tick-by-tick trace (see
+        /// Patch_BaseAI_SetTargetInfo_Diag in Patches.cs) that floods the log
+        /// for any Enrage-configured creature. Kept in the codebase and gated
+        /// by this flag instead of deleted, so it can be flipped back on for
+        /// the next targeting investigation without writing it again.</summary>
+        public static bool TargetTickDiagEnabled => _targetTickDiag != null && _targetTickDiag.Value;
+        /// <summary>Off by default - the '[CC fear] ... vs ...: mine=... ' line
+        /// in Band.cs, logged every re-check interval (FearInterval, 2s by
+        /// default) for any creature actively weighing a fight. The fear
+        /// system's own one-shot event logs (cornered, stuck fleeing) are
+        /// unaffected and still follow Verbose Logging alone.</summary>
+        public static bool FearTickDiagEnabled => _fearTickDiag != null && _fearTickDiag.Value;
+        /// <summary>Off by default - the '[CC enemy-check] ... vs ...' line
+        /// in Patches.cs, logging every BaseAI.IsEnemy call where the
+        /// comparer is a tamed creature. Built to check whether a tamed
+        /// troll's AoE slam is correctly reading nearby hostiles as enemies;
+        /// left in for reuse on the next tamed-creature attack question.</summary>
+        public static bool EnemyCheckDiagEnabled => _enemyCheckDiag != null && _enemyCheckDiag.Value;
+        /// <summary>Off by default - the '[logging] ...' trace lines in
+        /// TrollLogging.cs covering tree selection, the successor-log search
+        /// after a fell, drop collection, and chopping. Built to diagnose the
+        /// logging troll's WIP behaviour (inconsistent chopping, drops not
+        /// collected); left in for reuse.</summary>
+        public static bool LoggingDiagEnabled => _loggingDiag != null && _loggingDiag.Value;
+        /// <summary>The '[CC] {prefab} &lt;faction&gt; ai=... stance=... ...'
+        /// line in CreatureState.cs - logged once per creature as its rule is
+        /// resolved (spawn, or a config reload reapplying rules), not a
+        /// per-tick trace. On by default alongside Verbose Logging; this
+        /// exists so it can be silenced independently of every other verbose
+        /// line once it's served its purpose for a given creature.</summary>
+        public static bool CreatureSpawnLogEnabled => _creatureSpawnDiag == null || _creatureSpawnDiag.Value;
         public static bool BirchFineWoodOnly => _birchFine != null && _birchFine.Value;
         public static bool BirchKeepSeeds => _birchSeeds != null && _birchSeeds.Value;
+        public static bool CottonWoodDoubleWoodOnly => _cottonWoodDouble == null || _cottonWoodDouble.Value;
+        public static bool WillowDoubleWood => _willowDouble == null || _willowDouble.Value;
+        public static bool OakFamilyFineWoodOnly => _oakFineWood == null || _oakFineWood.Value;
         public static float TamedRegenMultiplier => _tamedRegen == null ? 1f : _tamedRegen.Value;
         public static bool TamesSpareStructures => _tameStructures == null || _tameStructures.Value;
         public static bool OfflineTamingEnabled => _offlineTaming == null || _offlineTaming.Value;
+        /// <summary>How long the catch-up food scan waits after Awake before
+        /// looking for nearby items. Needed because a neighbouring sector the
+        /// food pile sits in can still be mid-load the instant THIS
+        /// creature's own sector comes in - scanning immediately can find
+        /// nothing even though the pile is right there.</summary>
+        public static float OfflineTamingScanDelay => _offlineTamingScanDelay == null ? 3f : _offlineTamingScanDelay.Value;
+        /// <summary>Gates taming food (both live self-taming and offline
+        /// catch-up) on vanilla's own ItemData.m_pickedUp flag - permanently
+        /// false on anything freshly spawned, permanently true the instant
+        /// it enters a player's inventory. Stops a creature taming itself
+        /// off food it stumbled onto (a kill's own drop, a container) while
+        /// still allowing food a player deliberately carried and placed.</summary>
+        public static bool RequirePlayerHandledTamingFood => _requireHandledFood == null || _requireHandledFood.Value;
 
         // The old single player score (base + sqrt(armor), capped at 2.8) is
         // gone deliberately. It could only ever produce ONE number, and the
@@ -454,6 +561,36 @@ namespace CreatureControl
                 "Drops known log spam from other mods (currently: No Rain Damage's per-piece " +
                 "'I'm wet!' Info line) before it reaches the console or disk log. Leaves this " +
                 "mod's own Verbose logging and the global BepInEx log level untouched.");
+            _targetTickDiag = Config.Bind("Diagnostics", "Target Tick Trace (spammy)", false,
+                "The '[CC tick]' line in Patches.cs - logs vanilla's own AI target on every " +
+                "single tick for any Enrage-configured creature (e.g. Bjorn). Built to answer " +
+                "one specific targeting bug and left in for reuse, but it floods the log if left " +
+                "on. Off by default; also requires Verbose Logging above to be on.");
+            _fearTickDiag = Config.Bind("Diagnostics", "Fear Verdict Trace (spammy)", false,
+                "The '[CC fear] ... vs ...: mine=...' line in Band.cs - logs the flee-or-fight " +
+                "verdict every re-check interval for any creature actively weighing a fight. " +
+                "Built to verify the fear system and left in for reuse, but it floods the log " +
+                "once several creatures are in combat. Off by default; also requires Verbose " +
+                "Logging above to be on. Does not affect the fear system's one-shot event logs " +
+                "(cornered, stuck fleeing).");
+            _enemyCheckDiag = Config.Bind("Diagnostics", "Tamed Attack Enemy-Check Trace (spammy)", false,
+                "The '[CC enemy-check] ... vs ...' line in Patches.cs - logs every " +
+                "BaseAI.IsEnemy call where the comparer is a tamed creature, which is the exact " +
+                "check a tamed creature's AoE attack uses per potential target to decide whether " +
+                "to damage it. Built to check why a tamed troll's slam was only hitting one " +
+                "enemy. IsEnemy is called very often outside of attacks too (sensing, fear), so " +
+                "this can flood the log - off by default; also requires Verbose Logging above.");
+            _loggingDiag = Config.Bind("Diagnostics", "Troll Logging Trace (spammy)", false,
+                "The '[logging] ...' trace lines in TrollLogging.cs - tree selection, the " +
+                "successor-log search after a fell (including how far away the nearest real log " +
+                "actually was, even when outside the search radius), drop collection, and each " +
+                "chop. Built to diagnose the logging troll's WIP behaviour. Off by default; also " +
+                "requires Verbose Logging above.");
+            _creatureSpawnDiag = Config.Bind("Diagnostics", "Creature Spawn Summary", true,
+                "The '[CC] {prefab} <faction> ai=... stance=...' line - one line per creature " +
+                "as its rule is resolved (spawn, or a config reload), not a per-tick trace. On " +
+                "by default alongside Verbose Logging; turn off to silence just this line while " +
+                "keeping every other verbose message.");
 
             _birchFine = Config.Bind("Trees", "Birch Drops Only Fine Wood", true,
                 "Strips everything except FineWood from every birch drop table. Applied to the " +
@@ -461,6 +598,26 @@ namespace CreatureControl
             _birchSeeds = Config.Bind("Trees", "Birch Still Drops Seeds", false,
                 "Turn on to spare BirchSeeds from the strip. Off means birch really does drop " +
                 "fine wood and nothing else - which also means no seeds to replant with.");
+            _cottonWoodDouble = Config.Bind("Trees", "Cotton Wood: Wood Only On The Log", true,
+                "RtDBiomes' Cotton Wood tree normally splits its payout 1:1 between Wood and " +
+                "FineWood on both the stump and the felled log's half-log. The stump is left " +
+                "exactly as shipped (still 12-14 picks, still mixed) - only the half-log " +
+                "changes: pinned to Wood-only and set to x36-37, which is its own doubling " +
+                "(15->30) plus what doubling the stump would have added, moved here instead.");
+            _willowDouble = Config.Bind("Trees", "Willow: Double Wood, On The Log", true,
+                "RtDBiomes' Willow tree already drops nothing but Wood. The stump is left " +
+                "exactly as shipped (still 30 picks) - only the half-log changes: set to a " +
+                "guaranteed x65, which is its own doubling (25->50) plus what doubling the " +
+                "stump would have added, moved here instead.");
+            _oakFineWood = Config.Bind("Trees", "Oak Family: Fine Wood Only On The Log", true,
+                "Every RtDBiomes prefab with 'oak' in its name (currently the Red Oak tree) " +
+                "normally splits its payout 1:1 between Wood and FineWood on both the stump " +
+                "and the felled log's half-log. The stump is left exactly as shipped (still " +
+                "30 picks, still mixed) - only the half-log changes: pinned to FineWood-only " +
+                "and set to a guaranteed x45, which is its own doubling (15->30) plus what " +
+                "doubling the stump would have added, moved here instead. Matched by name " +
+                "substring, so any future oak-family tree RtDBiomes adds is picked up " +
+                "automatically.");
 
             _tamedRegen = Config.Bind("Taming", "Tamed HP Regen Multiplier", 1f,
                 new ConfigDescription(
@@ -473,6 +630,22 @@ namespace CreatureControl
                 "Stops your tamed creatures damaging anything YOU built - no more stray swings " +
                 "knocking holes in your walls. They can still hit trees, rocks and everything " +
                 "else in the world exactly as before; this only shields player-built pieces.");
+            _offlineTamingScanDelay = Config.Bind("Taming", "Catch-up Food Scan Delay", 3f,
+                new ConfigDescription(
+                    "Seconds the catch-up feature waits after a creature reloads before scanning " +
+                    "for nearby food. A neighbouring sector the food pile sits in can still be " +
+                    "mid-load the instant this creature's own sector comes in; scanning too soon " +
+                    "finds nothing even though the pile is right there. Raise this if food is " +
+                    "still being missed; vanilla itself waits 3s before its own first taming tick.",
+                    new AcceptableValueRange<float>(0f, 15f)));
+            _requireHandledFood = Config.Bind("Taming", "Taming Food Must Be Player-Handled", true,
+                "Uses vanilla's own permanent per-item ItemData.m_pickedUp flag - false on " +
+                "anything freshly spawned (a kill's loot, a container's contents), set true " +
+                "forever the instant it enters ANY player's inventory, and preserved through " +
+                "drop/pickup and stacking. With this on, a creature can only start or continue " +
+                "taming from food a player actually carried and placed - never food it wandered " +
+                "onto by chance, like a boar's own meat drop lying where it died. Applies to " +
+                "both live self-taming and the offline catch-up below.");
             _offlineTaming = Config.Bind("Taming", "Credit Taming Progress While Away", true,
                 "Vanilla's own taming timer AND its 'find and eat nearby food' behaviour both only " +
                 "run while the creature is actually loaded - leave the zone and both just stop, " +
@@ -496,8 +669,10 @@ namespace CreatureControl
                 new ConfigDescription(
                     "How far a Troll Logging Leash's binding and work area reaches. A logging " +
                     "troll never paths outside this while bound. Every placed leash shows its " +
-                    "radius on the ground as a ring, same as a vanilla Ward's edge marker.",
-                    new AcceptableValueRange<float>(10f, 50f)));
+                    "radius on the ground as a ring, same as a vanilla Ward's edge marker. " +
+                    "50m only covers a handful of trees; raised to 150m so a leash can actually " +
+                    "cover a real patch of forest.",
+                    new AcceptableValueRange<float>(10f, 150f)));
             _chopInterval = Config.Bind("Logging", "Chop Interval", 2f,
                 new ConfigDescription(
                     "Seconds between hits once a logging troll is in range of its target tree.",
@@ -520,6 +695,71 @@ namespace CreatureControl
                     "How long a logging troll gets to walk back inside its leash radius after " +
                     "combat clears before it is simply teleported the rest of the way there.",
                     new AcceptableValueRange<float>(5f, 180f)));
+            _successorRadius = Config.Bind("Logging", "Successor Log Search Radius", 15f,
+                new ConfigDescription(
+                    "How far past a felled tree's trunk to look for the log it left behind, " +
+                    "before giving up on that tree and collecting whatever it already dropped. " +
+                    "A tall tree's log can land well past a small radius - confirmed live via " +
+                    "the logging diagnostic before this was raised from its old 4m default.",
+                    new AcceptableValueRange<float>(2f, 40f)));
+            _dropPickupRadius = Config.Bind("Logging", "Drop Pickup Radius", 15f,
+                new ConfigDescription(
+                    "How far around a felled tree's last known spot to sweep for its drops once " +
+                    "nothing is left to chop. Same reasoning as the successor search radius " +
+                    "above - kept in sync by default, but independently tunable.",
+                    new AcceptableValueRange<float>(2f, 40f)));
+            _passivePickupRadius = Config.Bind("Logging", "Passive Pickup Radius", 6f,
+                new ConfigDescription(
+                    "A logging troll auto-picks-up any known tree/ore drop within this radius " +
+                    "of wherever it currently is, the same way a player passively picks up " +
+                    "nearby items while walking (vanilla's own pickup range is 2m) - just at " +
+                    "3x that distance for a creature this size.",
+                    new AcceptableValueRange<float>(1f, 20f)));
+            _stuckTimeout = Config.Bind("Logging", "Stuck Timeout Seconds", 30f,
+                new ConfigDescription(
+                    "How long a logging troll is given to close the distance on whatever it's " +
+                    "currently walking toward before the matching failsafe kicks in: a chop " +
+                    "target it can't reach teleports it onto the leash and drops that target; " +
+                    "a deposit chest it can't reach gets its items teleported in remotely so " +
+                    "the troll can get back to work instead of standing there stuck.",
+                    new AcceptableValueRange<float>(5f, 120f)));
+            _replantEnabled = Config.Bind("Logging", "Replant Cleared Stumps", true,
+                "Once a logging troll fully clears a tree (log AND stump both gone), it plants a " +
+                "fresh sapling back where the stump stood - no seed consumed, just a direct " +
+                "spawn. Only species listed in ReplantMapping (defaults, plus whatever you add " +
+                "under [Replant] in CreatureControl.Creatures.cfg) are ever replanted; anything " +
+                "not listed is silently skipped rather than guessed at.");
+            _combatGrace = Config.Bind("Logging", "Combat Grace Seconds", 3f,
+                new ConfigDescription(
+                    "How long a logging troll keeps treating itself as 'in combat' after the " +
+                    "last tick vanilla's own target/alert signal was actually seen. Without " +
+                    "this, that signal can blip false for a tick mid-fight (vanilla only " +
+                    "re-checks targets every ~2-6s) and bounce the troll back into logging " +
+                    "behaviour while something is still hitting it.",
+                    new AcceptableValueRange<float>(0.5f, 15f)));
+            _stuckBlacklist = Config.Bind("Logging", "Stuck Target Blacklist Seconds", 120f,
+                new ConfigDescription(
+                    "How long a target that just stranded the troll (the stuck-teleport " +
+                    "failsafe) stays excluded from being picked again. Without this, " +
+                    "teleporting off an unreachable target and immediately re-picking that " +
+                    "same 'nearest' object produced an endless walk -> stuck -> teleport loop.",
+                    new AcceptableValueRange<float>(10f, 600f)));
+            _woodDepositThreshold = Config.Bind("Logging", "Wood Auto-Deposit Threshold", 50,
+                new ConfigDescription(
+                    "Once any wood-tier item (Wood, FineWood, RoundLog, ElderBark, Blackwood, " +
+                    "Frostwood, YggdrasilWood) the troll is carrying reaches this amount, it's " +
+                    "automatically deposited the next time the troll passes near a suitable " +
+                    "chest - no dedicated trip is ever made for it, unlike every other material. " +
+                    "A flat number rather than each item's own max stack, since the point is " +
+                    "clearing wood regularly rather than hauling around 999 of something.",
+                    new AcceptableValueRange<int>(1, 999)));
+            _renameStorageKey = Config.Bind("Logging", "Rename Storage Key",
+                new KeyboardShortcut(KeyCode.R, KeyCode.LeftControl),
+                "Look at a chest and press this to name it (vanilla chests have no naming of " +
+                "their own, unlike ships/portals). A named chest (case-insensitive, spaces/" +
+                "dashes/underscores ignored) only accepts deposits of that one matching item " +
+                "from a logging troll - an unnamed chest still accepts anything from one. Never " +
+                "restricts what a PLAYER can manually put into any chest, named or not.");
 
             LoadConfigs();
 
@@ -598,6 +838,7 @@ namespace CreatureControl
             HandleReload();
             HandleStanceKey();
             HandleLoggingKey();
+            HandleRenameStorageKey();
             HandleForceTargetKey();
             TargetMarker.Tick();
 
@@ -864,6 +1105,22 @@ namespace CreatureControl
 
             player.Message(MessageHud.MessageType.Center,
                            $"{name}: logging {(next ? "ON" : "OFF")}", 0, null, false);
+        }
+
+        /// <summary>Look at a chest, press the key, get vanilla's own rename
+        /// dialog - see StorageNaming for what the name actually does.</summary>
+        void HandleRenameStorageKey()
+        {
+            if (_renameStorageKey == null || !_renameStorageKey.Value.IsDown()) return;
+            if (IsTyping()) return;
+
+            var player = Player.m_localPlayer;
+            if (player == null) return;
+
+            var hovered = player.GetHoverObject();
+            if (hovered == null) return;
+
+            StorageNaming.TryOpenRename(hovered);
         }
 
         /// <summary>
