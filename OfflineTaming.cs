@@ -54,9 +54,18 @@ namespace CreatureControl
                 long nowTicks = ZNet.instance.GetTime().Ticks;
                 zdo.Set(ZdoLastSeenKey, nowTicks);
 
-                // Never seen before (freshly spawned, never yet unloaded) -
-                // nothing to catch up, just start the clock.
-                if (lastSeenTicks < 0) return;
+                // Never seen before (freshly spawned, or the very first Awake
+                // since this feature shipped - there is no prior stamp to
+                // diff against either way) - nothing to catch up, just start
+                // the clock. Logged, not silent: a first-ever sighting and a
+                // broken patch both produce zero further output otherwise,
+                // and they need to look different in a report.
+                if (lastSeenTicks < 0)
+                {
+                    if (Plugin.Verbose)
+                        Plugin.Log.LogInfo($"[CC tame-catchup] {__instance.name}: first sighting, starting the clock.");
+                    return;
+                }
                 if (__instance.IsTamed()) return;
 
                 double awaySeconds = new TimeSpan(nowTicks - lastSeenTicks).TotalSeconds;
@@ -67,7 +76,18 @@ namespace CreatureControl
                 // at - skip the whole catch-up instead of rewarding or
                 // punishing a fight nobody watched.
                 var mai = __instance.GetComponent<MonsterAI>();
-                if (mai == null || mai.IsAlerted()) return;
+                if (mai == null)
+                {
+                    if (Plugin.Verbose)
+                        Plugin.Log.LogInfo($"[CC tame-catchup] {__instance.name}: no MonsterAI, skipping (away {awaySeconds:0}s).");
+                    return;
+                }
+                if (mai.IsAlerted())
+                {
+                    if (Plugin.Verbose)
+                        Plugin.Log.LogInfo($"[CC tame-catchup] {__instance.name}: alerted on reload, skipping (away {awaySeconds:0}s).");
+                    return;
+                }
 
                 float fedDuration = __instance.m_fedDuration;
                 if (fedDuration <= 0f) return;
@@ -133,7 +153,14 @@ namespace CreatureControl
             int eaten, long nowTicks, bool bumpFeeding)
         {
             if (bumpFeeding) zdo.Set(ZDOVars.s_tameLastFeeding, nowTicks);
-            if (covered <= 0) return;
+            if (covered <= 0)
+            {
+                if (Plugin.Verbose)
+                    Plugin.Log.LogInfo(
+                        $"[CC tame-catchup] {tameable.name}: away {awaySeconds:0}s, already hungry " +
+                        $"before it unloaded and nothing nearby to eat - no credit.");
+                return;
+            }
 
             float remaining = zdo.GetFloat(ZDOVars.s_tameTimeLeft, tameable.m_tamingTime);
             remaining = Mathf.Max(0f, remaining - (float)covered);
