@@ -32,8 +32,42 @@ namespace CreatureControl
         public static bool Accepts(string storageName, string item)
         {
             if (string.IsNullOrEmpty(storageName)) return true;
-            return string.Equals(Normalize(storageName), Normalize(item), StringComparison.OrdinalIgnoreCase);
+
+            string wanted = Normalize(storageName);
+            string have = Normalize(item);
+
+            if (string.Equals(wanted, have, StringComparison.OrdinalIgnoreCase)) return true;
+
+            // Category names accept a whole family rather than one exact
+            // item, so one chest can hold every kind of a thing without
+            // needing a chest per species.
+            return MatchesCategory(wanted, have);
         }
+
+        /// <summary>Family matching for chests named after a CATEGORY rather
+        /// than a single item. Kept to substrings of the item's own prefab
+        /// name so it works for modded items too, with no per-item list.
+        ///
+        /// "Seed"/"Seeds" covers everything plantable: anything with "seed"
+        /// in its name (BeechSeeds, CarrotSeeds, AncientSeed, and any mod's
+        /// equivalent), plus the two families that are seeds in function but
+        /// never say so in their name - cones (FirCone, PineCone) and acorns.
+        /// </summary>
+        static bool MatchesCategory(string normalizedStorageName, string normalizedItem)
+        {
+            if (normalizedStorageName.Equals("seed", StringComparison.OrdinalIgnoreCase) ||
+                normalizedStorageName.Equals("seeds", StringComparison.OrdinalIgnoreCase))
+            {
+                return Has(normalizedItem, "seed")
+                    || Has(normalizedItem, "cone")
+                    || Has(normalizedItem, "acorn");
+            }
+
+            return false;
+        }
+
+        static bool Has(string haystack, string needle) =>
+            haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
 
         static string Normalize(string s) =>
             s == null ? "" : s.Replace(" ", "").Replace("-", "").Replace("_", "");

@@ -706,10 +706,19 @@ namespace CreatureControl
             float leash = Mai.m_alertRange;
             if (leash > 0f && leash < 9000f)
             {
+                // Anchored to whatever this creature is actually tethered to:
+                // its follow target if it has one, otherwise ITSELF. Falling
+                // back to the local player was wrong and confirmed live - a
+                // tame that isn't following anyone would stand down mid-fight
+                // the moment the player wandered off, because the leash was
+                // being measured from the player rather than from the creature
+                // doing the fighting. That reads in-game as "he just sits
+                // there and gets smacked until I walk back", since walking
+                // back is literally what re-validates the order.
                 var followGo = Mai.GetFollowTarget();
                 Vector3 anchor = followGo != null
                     ? followGo.transform.position
-                    : (Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Chr.transform.position);
+                    : Chr.transform.position;
                 if ((ForcedTarget.transform.position - anchor).sqrMagnitude > leash * leash)
                 {
                     if (Plugin.Verbose)
@@ -721,6 +730,25 @@ namespace CreatureControl
 
             return true;
         }
+
+        // ---- forced chop/mine target (player command, logging trolls only) ------
+        // The Force Target hotkey's dual-use half (see Plugin.HandleForceTargetKey):
+        // aim at a tree/log/stump/rock instead of a Character and every currently
+        // logging-enabled tame gets sent after THAT specific one, overriding
+        // whatever it was already working. Deliberately its own separate slot
+        // from ForcedTarget rather than reusing it - a Character and a chop
+        // target are never interchangeable, and a creature that isn't even
+        // logging-enabled should never have to care this field exists at all.
+        public GameObject ForcedChopTarget;
+
+        /// <summary>Earliest Time.time NeutralDefense may hand this creature
+        /// another order. A plain back-off so that if its pick ever gets
+        /// stood down again by some rule it didn't account for, the two
+        /// can't alternate every tick the way they were confirmed to.</summary>
+        public float NextNeutralDefenseAt;
+
+        public void SetForcedChopTarget(GameObject target) => ForcedChopTarget = target;
+        public void ClearForcedChopTarget() => ForcedChopTarget = null;
 
         // ---- stalking -----------------------------------------------------------
         // A hunter that walks straight at you is not stalking. This holds it at
@@ -1065,12 +1093,41 @@ namespace CreatureControl
         /// troll where to look for its drops afterwards.</summary>
         public Vector3 LogTargetPos;
         public float ChopTimer;
+        /// <summary>Counts every real chop hit - not persisted, not reset
+        /// between trees, just a parity toggle so TrollLogging.Chop can
+        /// alternate between each attack category's two real animation
+        /// variants (swing_logv/swing_logh, stomp_l/stomp_r) instead of
+        /// playing the exact same one every single swing.</summary>
+        public int ChopHitCount;
 
         /// <summary>Time.time the troll first found itself too far from its
         /// CURRENT chop target to hit it, or -1 while it isn't stuck. Reset
         /// whenever LogTargetTree changes or it arrives - see
         /// TrollLogging.DriveChop's 30s teleport-to-leash failsafe.</summary>
         public float ChopApproachSince = -1f;
+
+        /// <summary>Time.time the troll first got within chop range and
+        /// started actively swinging at its CURRENT target, or -1 before that
+        /// happens (or once a target is dropped/replaced). Separate from
+        /// ChopApproachSince, which only covers the walk there - this covers
+        /// standing right next to it and hitting it. See
+        /// Plugin.LoggingHarvestStuckTimeout / TrollLogging's force-finish
+        /// failsafe.</summary>
+        public float ChopActiveSince = -1f;
+
+        /// <summary>True once the CURRENT swing's animation has been fired
+        /// but its damage hasn't landed yet. The swing is deliberately
+        /// telegraphed a moment BEFORE the hit: chop damage one-shots most
+        /// targets, so firing the trigger at the same instant the target is
+        /// destroyed meant the troll snapped straight back to walking and the
+        /// animation was never visibly played at all. Reset each time the
+        /// hit actually lands.</summary>
+        public bool ChopSwingTelegraphed;
+
+        /// <summary>Time.time this troll was first seen outside its leash, or
+        /// -1 while it's inside. Drives the grace period before it's actually
+        /// made to walk back - see Plugin.LoggingLeashGraceSeconds.</summary>
+        public float OutsideLeashSince = -1f;
 
         /// <summary>The object that most recently stranded this troll long
         /// enough to trigger the stuck-teleport failsafe, and how long it
@@ -1122,6 +1179,23 @@ namespace CreatureControl
         /// DepositTarget to reach it, or -1 while it isn't stuck. See
         /// TrollLogging.DriveDeposit's 30s remote-deposit failsafe.</summary>
         public float DepositApproachSince = -1f;
+
+        /// <summary>A known-catalog item drop sitting on the ground within the
+        /// leash that the troll is deliberately walking toward - never a
+        /// dedicated "trip" like DepositTarget, just what fills idle time when
+        /// there's no tree/log/stump/rock left to chop. Cleared once reached
+        /// (PassivePickup grabs it the same tick it's in range) or once it
+        /// stops existing. See TrollLogging.DriveWork's idle branch.</summary>
+        public GameObject CollectTarget;
+
+        /// <summary>The specific target Physics.IgnoreCollision was turned on
+        /// for while chopping (see DriveChop) - tracked so it can be turned
+        /// back off by exact pair once the troll moves off this target,
+        /// rather than leaving a stale ignore-pair behind for a log/stump
+        /// GameObject that will shortly be destroyed anyway but, on the rare
+        /// chance it survives (a rock chunk that merely lost a piece), would
+        /// otherwise stay permanently non-solid to this troll.</summary>
+        public Collider[] ChopIgnoredColliders;
 
         /// <summary>One reserved slot per distinct tree/ore drop item (see
         /// TreeDropCatalog) - keyed by item prefab name, each independent of
@@ -1188,6 +1262,8 @@ namespace CreatureControl
             Carry.Clear();
             DepositTarget = null;
             DepositApproachSince = -1f;
+            CollectTarget = null;
+            ForcedChopTarget = null;
             IdleSince = -1f;
             ForceDeposit = false;
             LastCombatSignalAt = -1f;
@@ -1217,9 +1293,67 @@ namespace CreatureControl
             if (Nview == null || !Nview.IsValid()) return;
             var zdo = Nview.GetZDO();
             if (zdo == null) return;
+            LoadCarry();
             if (!zdo.GetBool(ZdoLoggingKey, false)) return;   // absent key also reads false
             _loggingOn = true;
             _loggingOverridden = true;
+        }
+
+        public const string ZdoCarryKey = "CC_carry";
+
+        /// <summary>Carry is otherwise a plain in-memory dictionary, which
+        /// meant everything a troll was holding but hadn't deposited yet was
+        /// destroyed the moment its zone unloaded or the game was quit -
+        /// materials visibly picked up, then simply gone. Stance and logging
+        /// mode were already persisted; the haul was not.
+        ///
+        /// Stored as one compact "name:count|name:count" string rather than a
+        /// key per item, so a troll carrying a dozen kinds of drop doesn't
+        /// spray a dozen ZDO fields that then have to be cleaned up as the
+        /// mix changes.</summary>
+        public void SaveCarry()
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            if (!Nview.IsOwner()) Nview.ClaimOwnership();
+            if (!Nview.IsOwner()) return;
+
+            if (Carry.Count == 0)
+            {
+                Nview.GetZDO().Set(ZdoCarryKey, "");
+                return;
+            }
+
+            var sb = new System.Text.StringBuilder();
+            foreach (var kv in Carry)
+            {
+                if (sb.Length > 0) sb.Append('|');
+                sb.Append(kv.Key).Append(':').Append(kv.Value);
+            }
+            Nview.GetZDO().Set(ZdoCarryKey, sb.ToString());
+        }
+
+        public void LoadCarry()
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            var zdo = Nview.GetZDO();
+            if (zdo == null) return;
+
+            string raw = zdo.GetString(ZdoCarryKey, "");
+            if (string.IsNullOrEmpty(raw)) return;
+
+            Carry.Clear();
+            foreach (var part in raw.Split('|'))
+            {
+                // LastIndexOf, not IndexOf: an item name containing a colon
+                // would otherwise split in the wrong place.
+                int c = part.LastIndexOf(':');
+                if (c <= 0) continue;
+                if (int.TryParse(part.Substring(c + 1), out int count) && count > 0)
+                    Carry[part.Substring(0, c)] = count;
+            }
+
+            if (Plugin.Verbose && Carry.Count > 0)
+                Plugin.Log.LogInfo($"[logging] {Prefab}: restored carry from save ({Carry.Count} kind(s)).");
         }
 
         // Unity overloads == so a destroyed object compares equal to null.

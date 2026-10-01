@@ -74,23 +74,109 @@ namespace CreatureControl
         };
 
         static Store _active = new Store();
+        static Store _configured = new Store();
+        static Dictionary<string, string> _discovered;
+        // Separate from _discovered being non-null: Install() runs at CONFIG
+        // LOAD time, long before ZNetScene exists, so the first discovery
+        // attempt legitimately finds nothing. Caching that empty result as
+        // "done" is what stopped it ever retrying once the world was actually
+        // up - confirmed live as "0 discovered from Plant.m_grownPrefabs" and
+        // therefore no vanilla species ever replanting. Only a run that had a
+        // real ZNetScene to read counts as complete.
+        static bool _discoveryComplete;
 
         public static void Install(Store overrides)
         {
+            _configured = overrides ?? new Store();
+            _discovered = null;     // re-derive against the new prefab set
+            _discoveryComplete = false;
+            Rebuild();
+        }
+
+        /// <summary>Resets the live-derived half so it rebuilds on next use -
+        /// call when ZNetScene changes (world load), same as TreeDropCatalog.</summary>
+        public static void Reset()
+        {
+            _discovered = null;
+            _discoveryComplete = false;
+        }
+
+        static void Rebuild()
+        {
             var merged = new Store();
+
+            // Widest layer first: every sapling the GAME ITSELF knows about,
+            // derived from real data rather than a hand-kept name list. A
+            // Plant component's m_grownPrefabs says exactly what that sapling
+            // turns into, so inverting it gives grown-tree -> sapling for
+            // vanilla and for any mod's trees alike, with no per-species
+            // maintenance. This is what the Defaults table below could never
+            // cover: it deliberately left out every vanilla tree
+            // (Birch/Oak/Beech/Fir/Pine) for want of a confident sapling
+            // name, which meant a troll working a vanilla forest completed
+            // the whole fell -> log -> stump chain and then silently planted
+            // nothing at all.
+            if (!_discoveryComplete)
+            {
+                _discovered = DiscoverFromPlants(out _discoveryComplete);
+            }
+            foreach (var kv in _discovered) merged.ByTreeName[kv.Key] = kv.Value;
+
+            // Then the curated table, which exists to DISAMBIGUATE where the
+            // game's own data is genuinely ambiguous (several RtDBiomes
+            // species share one stump/log asset), so it outranks discovery.
             foreach (var kv in Defaults) merged.ByTreeName[kv.Key] = kv.Value;
-            if (overrides != null)
-                foreach (var kv in overrides.ByTreeName) merged.ByTreeName[kv.Key] = kv.Value;   // config wins
+
+            // Config always has the last word.
+            foreach (var kv in _configured.ByTreeName) merged.ByTreeName[kv.Key] = kv.Value;
+
             _active = merged;
 
             if (Plugin.Verbose)
-                Plugin.Log.LogInfo($"[logging] replant mapping active: {_active.ByTreeName.Count} species.");
+                Plugin.Log.LogInfo(
+                    $"[logging] replant mapping active: {_active.ByTreeName.Count} species " +
+                    $"({_discovered.Count} discovered from Plant.m_grownPrefabs, " +
+                    $"{Defaults.Count} curated, {_configured.ByTreeName.Count} from config).");
+        }
+
+        /// <summary>grown-tree prefab name -> sapling prefab name, read off
+        /// every Plant component registered in ZNetScene.</summary>
+        static Dictionary<string, string> DiscoverFromPlants(out bool complete)
+        {
+            complete = false;
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (ZNetScene.instance == null) return map;
+            var prefabs = ZNetScene.instance.m_prefabs;
+            if (prefabs == null) return map;
+            complete = true;   // a real prefab list was read - don't retry
+
+            foreach (var go in prefabs)
+            {
+                if (go == null) continue;
+                var plant = go.GetComponent<Plant>();
+                if (plant == null || plant.m_grownPrefabs == null) continue;
+
+                foreach (var grown in plant.m_grownPrefabs)
+                {
+                    if (grown == null) continue;
+                    // First sapling that claims a given grown tree wins, so a
+                    // later duplicate can't quietly overwrite a good match.
+                    if (!map.ContainsKey(grown.name)) map[grown.name] = go.name;
+                }
+            }
+            return map;
         }
 
         public static bool TryGetSapling(string treeName, out string saplingName)
         {
             saplingName = null;
             if (string.IsNullOrEmpty(treeName)) return false;
+
+            // ZNetScene isn't up yet at config-load time, so the discovered
+            // half is built on first real use instead - and keeps retrying
+            // until a run actually had a prefab list to read.
+            if (!_discoveryComplete) Rebuild();
+
             return _active.ByTreeName.TryGetValue(treeName, out saplingName);
         }
     }

@@ -63,7 +63,10 @@ namespace CreatureControl
                 if (lastSeenTicks < 0)
                 {
                     if (Plugin.Verbose)
+                    {
                         Plugin.Log.LogInfo($"[CC tame-catchup] {__instance.name}: first sighting, starting the clock.");
+                        LogConsumeList(__instance);
+                    }
                     return;
                 }
                 if (__instance.IsTamed()) return;
@@ -117,6 +120,44 @@ namespace CreatureControl
                 __instance.StartCoroutine(
                     DeferredConsume(__instance, mai, zdo, awaySeconds, stillFedFor, fedDuration, nowTicks));
             }
+        }
+
+        /// <summary>Logs exactly what this creature will accept as food, and
+        /// how close it has to get. Added because "it isn't sensing the food"
+        /// is impossible to tell apart from "that isn't food to it" or "it
+        /// can't physically reach it" without seeing the real list - and the
+        /// list lives in prefab data as references, not names, so only a
+        /// runtime read resolves it.
+        ///
+        /// m_consumeRange is the one that catches people out: a creature can
+        /// SEE food across m_consumeSearchRange (10m for a boar) but has to
+        /// get within m_consumeRange (1m) to actually eat it. Penned up with
+        /// food just out of reach, it starves next to a full pile.</summary>
+        static void LogConsumeList(Tameable tameable)
+        {
+            var mai = tameable != null ? tameable.GetComponent<MonsterAI>() : null;
+            if (mai == null) return;
+
+            var items = mai.m_consumeItems;
+            if (items == null || items.Count == 0)
+            {
+                Plugin.Log.LogInfo($"[CC tame] {tameable.name}: eats NOTHING - empty consume list.");
+                return;
+            }
+
+            var names = new List<string>(items.Count);
+            foreach (var it in items)
+            {
+                if (it == null) { names.Add("<null>"); continue; }
+                string n = it.name;
+                var shared = it.m_itemData?.m_shared;
+                if (shared != null && !string.IsNullOrEmpty(shared.m_name)) n += $" ({shared.m_name})";
+                names.Add(n);
+            }
+
+            Plugin.Log.LogInfo(
+                $"[CC tame] {tameable.name}: eats [{string.Join(", ", names)}] - " +
+                $"must be within {mai.m_consumeRange}m to eat (searches {mai.m_consumeSearchRange}m).");
         }
 
         static IEnumerator DeferredConsume(
@@ -252,10 +293,47 @@ namespace CreatureControl
     [HarmonyPatch(typeof(MonsterAI), "CanConsume")]
     static class Patch_MonsterAI_CanConsume_RequireHandled
     {
-        static void Postfix(ItemDrop.ItemData item, ref bool __result)
+        static void Postfix(MonsterAI __instance, ItemDrop.ItemData item, ref bool __result)
         {
-            if (__result && Plugin.RequirePlayerHandledTamingFood && !item.m_pickedUp)
-                __result = false;
+            // Logged even when nothing is being blocked, because the silent
+            // case is the confusing one: this postfix only ever sees items
+            // vanilla ALREADY judged edible, so "not food to me at all" never
+            // reached here and looked exactly like "blocked by the rule".
+            // Naming the creature matters too - refusals were being recorded
+            // with no indication of which animal they came from, so a wolf
+            // rejecting meat was indistinguishable from the boar rejecting
+            // berries.
+            if (Plugin.Verbose && Plugin.LoggingDiagEnabled && __result)
+                Plugin.Log.LogInfo(
+                    $"[CC tame] {(__instance != null ? __instance.name : "?")}: " +
+                    $"'{item?.m_shared?.m_name}' IS edible " +
+                    $"(pickedUp={item?.m_pickedUp})");
+
+            if (!__result || !Plugin.RequirePlayerHandledTamingFood || item.m_pickedUp) return;
+
+            // TAMING food only. Once a creature is tamed, eating is just
+            // keeping it fed - a trough, a food chest or a feeder mod's
+            // dispensed items never pass through a player's hands, and
+            // starving a tame because of that was never the point of this
+            // rule. Wild creatures are still held to it exactly as before.
+            var chr = __instance != null ? __instance.GetComponent<Character>() : null;
+            if (chr != null && chr.IsTamed()) return;
+
+            __result = false;
+
+            // Used to reject silently, which made this rule indistinguishable
+            // from "the creature just isn't taming" - a tame could sit next
+            // to food for days with nothing anywhere saying why. Logged now
+            // so the cause is visible: food a player never actually carried
+            // (dungeon-chest loot, mod-spawned, or moved straight between
+            // containers) never gets vanilla's m_pickedUp flag, and is
+            // refused here by design. Turn off "Taming Food Must Be
+            // Player-Handled" if that isn't wanted.
+            if (Plugin.Verbose)
+                Plugin.Log.LogInfo(
+                    $"[CC tame] {(__instance != null ? __instance.name : "?")}: refused " +
+                    $"'{item.m_shared?.m_name}' - not player-handled (m_pickedUp false). " +
+                    "This is the Taming Food Must Be Player-Handled rule.");
         }
     }
 }

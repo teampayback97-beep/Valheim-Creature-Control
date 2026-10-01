@@ -49,11 +49,15 @@ namespace CreatureControl
                 var log = go.GetComponent<TreeLog>();
                 if (log != null) AddDrops(set, log.m_dropWhenDestroyed);
 
-                bool looksLikeStump = false;
-                var name = CreatureRules.CleanName(go.name);
-                foreach (var hint in StumpNameHints)
-                    if (name.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0) { looksLikeStump = true; break; }
-                if (looksLikeStump)
+                // Stumps and permanently-small tree variants are Destructible
+                // + DropOnDestroyed, never WearNTear, and their prefab names
+                // follow no reliable convention (see
+                // TrollLogging.IsTreeDestructible - this was the root cause of
+                // stumps never being detected at all). DestructibleType.Tree
+                // is the precise filter: Destructible alone would also pull in
+                // every barrel and crate's loot table.
+                var dest = go.GetComponent<Destructible>();
+                if (dest != null && dest.m_destructibleType == DestructibleType.Tree)
                 {
                     var stumpDrop = go.GetComponent<DropOnDestroyed>();
                     if (stumpDrop != null) AddDrops(set, stumpDrop.m_dropWhenDestroyed);
@@ -80,6 +84,12 @@ namespace CreatureControl
                 }
             }
 
+            // Confirmed by name in the log, not guessed: "vh_egg" comes from
+            // Valharvest ("Added vh_egg drop to seagulls"), a plain fixed
+            // name with no shared convention to pattern-match like LMTY's
+            // "*_LMTY" suffix - so it's just listed explicitly here.
+            foreach (var extra in ManualAdditions) set.Add(extra);
+
             _items = set;
             if (Plugin.Verbose)
                 Plugin.Log.LogInfo(
@@ -91,6 +101,11 @@ namespace CreatureControl
         // would require cross-referencing at build time for no real benefit,
         // since both lists are this short and change together in practice.
         static readonly string[] StumpNameHints = { "stump", "stub" };
+
+        // Confirmed tree/wildlife-adjacent drops that don't show up in any
+        // scanned DropTable and have no naming convention to pattern-match -
+        // add more here by hand as they turn up.
+        static readonly string[] ManualAdditions = { "vh_egg" };
 
         static void AddDrops(HashSet<string> set, DropTable table)
         {

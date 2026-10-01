@@ -27,6 +27,12 @@ namespace CreatureControl
         static ConfigEntry<KeyboardShortcut> _cycleKey;
         static ConfigEntry<KeyboardShortcut> _forceTargetKey;
         static ConfigEntry<float> _forceTargetRange;
+        static ConfigEntry<bool> _neutralDefenseOn;
+        static ConfigEntry<float> _neutralDefenseRadius;
+        static ConfigEntry<bool> _stackableChests;
+        static ConfigEntry<bool> _sleepWithoutFire;
+        static ConfigEntry<bool> _forceChopWithoutLeash;
+        static ConfigEntry<bool> _keepLeashZonesLoaded;
 
         static ConfigEntry<bool> _enrageOn;
 
@@ -98,7 +104,10 @@ namespace CreatureControl
         static ConfigEntry<float> _successorRadius;
         static ConfigEntry<float> _dropPickupRadius;
         static ConfigEntry<float> _passivePickupRadius;
+        static ConfigEntry<int> _carrySlots;
         static ConfigEntry<float> _stuckTimeout;
+        static ConfigEntry<float> _harvestStuckTimeout;
+        static ConfigEntry<float> _leashGraceSeconds;
         static ConfigEntry<KeyboardShortcut> _renameStorageKey;
         static ConfigEntry<bool> _replantEnabled;
         static ConfigEntry<float> _combatGrace;
@@ -113,6 +122,18 @@ namespace CreatureControl
         public static string ForceTargetKeyLabel =>
             _forceTargetKey == null ? "L.Alt + T" : _forceTargetKey.Value.ToString();
         public static float ForceTargetRange => _forceTargetRange == null ? 50f : _forceTargetRange.Value;
+        public static bool StackableChestsEnabled => _stackableChests == null || _stackableChests.Value;
+        public static bool SleepWithoutFire => _sleepWithoutFire == null || _sleepWithoutFire.Value;
+        /// <summary>Lets a tame that ISN'T in logging mode still accept a
+        /// forced chop/mine order, so a troll can be pointed at an ore vein
+        /// ad hoc without setting up a leash for it.</summary>
+        public static bool ForceChopWithoutLeash => _forceChopWithoutLeash == null || _forceChopWithoutLeash.Value;
+        /// <summary>Holds the zones around each logging leash genuinely
+        /// loaded and simulated, so trolls keep working for real while you're
+        /// away. Expensive by nature - see ZoneKeepAlive.</summary>
+        public static bool KeepLeashZonesLoaded => _keepLeashZonesLoaded != null && _keepLeashZonesLoaded.Value;
+        public static bool NeutralDefenseEnabled => _neutralDefenseOn == null || _neutralDefenseOn.Value;
+        public static float NeutralDefenseRadius => _neutralDefenseRadius == null ? 30f : _neutralDefenseRadius.Value;
 
         /// <summary>Master switch for the enrage mechanic. Reuses
         /// FearInterval for its own re-check cadence rather than adding a
@@ -165,11 +186,31 @@ namespace CreatureControl
         /// grabs anything it walks near the same way a player does, just at
         /// a scale that matches its size.</summary>
         public static float LoggingPassivePickupRadius => _passivePickupRadius == null ? 6f : _passivePickupRadius.Value;
+        /// <summary>How many distinct item kinds a logging troll can hold at
+        /// once - a plain slot count, like a chest, with no restriction on
+        /// WHAT may occupy a slot.</summary>
+        public static int LoggingCarrySlots => _carrySlots == null ? 10 : _carrySlots.Value;
         /// <summary>Seconds a logging troll is given to close the distance
         /// on whatever it's currently walking toward - a chop target or a
         /// deposit chest - before the matching failsafe kicks in (teleport
         /// to the leash for a chop target, remote deposit for a chest).</summary>
         public static float LoggingStuckTimeout => _stuckTimeout == null ? 30f : _stuckTimeout.Value;
+        /// <summary>Separate from LoggingStuckTimeout, which only ever covers
+        /// APPROACH (can't reach the target at all). This covers the troll
+        /// already standing right there, in range, actively swinging, but the
+        /// target just never dies - a rock formation tougher than expected, a
+        /// hit-registration edge case, whatever the exact cause. Rather than
+        /// let it swing forever, past this many seconds of continuous active
+        /// chopping on the SAME target it gets force-finished: killed
+        /// outright and its drops swept straight into the troll's carry, same
+        /// as a real kill.</summary>
+        public static float LoggingHarvestStuckTimeout => _harvestStuckTimeout == null ? 60f : _harvestStuckTimeout.Value;
+        /// <summary>Grace period before a logging troll that has slipped
+        /// outside its leash is made to walk back. Positioning around a tree
+        /// regularly clips the boundary for a moment, and reacting instantly
+        /// meant it abandoned whatever it was doing and marched to the middle
+        /// over a step it was about to take back anyway.</summary>
+        public static float LoggingLeashGraceSeconds => _leashGraceSeconds == null ? 15f : _leashGraceSeconds.Value;
         /// <summary>See ReplantMapping - only species listed there (defaults
         /// plus whatever [Replant] adds) are ever replanted regardless of
         /// this; it's just the overall on/off switch.</summary>
@@ -325,6 +366,44 @@ namespace CreatureControl
                 new ConfigDescription(
                     "How far the Force Target hotkey can pick out a target you are looking at.",
                     new AcceptableValueRange<float>(10f, 200f)));
+            _sleepWithoutFire = Config.Bind("General", "Sleep Without Fire", true,
+                "Removes the 'you need a fire' requirement for sleeping. The shelter requirement is " +
+                "untouched - a bed still has to be under a roof and properly enclosed, it just no " +
+                "longer has to sit next to a lit fire, so the hearth can go wherever the build wants " +
+                "it. Because the check is skipped entirely rather than widened, torch sconces and any " +
+                "other heat source are covered implicitly.");
+            _keepLeashZonesLoaded = Config.Bind("Logging", "Keep Leash Zones Loaded", true,
+                "Holds the world around each logging leash genuinely loaded and simulated, so trolls " +
+                "keep working for REAL while you're elsewhere - trees actually fall, rocks actually " +
+                "break, and the area is really cleared when you come back. Logging has no offline " +
+                "credit - this is the only way a troll works while you're away.\n\n" +
+                "COST: every held zone is fully simulated - terrain, vegetation, physics and every " +
+                "creature in it - continuously, whether or not anyone is looking. Every 64m zone the " +
+                "leash radius touches is held (up to 9 at a 50m radius). If your framerate suffers, or memory climbs over a long " +
+                "session, turn this off first. Leash positions are remembered in " +
+                "CreatureControl.Leashes.txt so an area keeps itself open without you revisiting it.");
+            _forceChopWithoutLeash = Config.Bind("General", "Force Chop Without Leash", true,
+                "Lets a tame that is NOT in logging mode still accept a forced chop/mine order from " +
+                "the Force Target hotkey. Point a troll at an ore vein or a rock and it will go work " +
+                "it, with no leash to set up first - useful for ad-hoc help while you're mining. It " +
+                "still only ever accepts targets it could actually log or mine, and stands down once " +
+                "the target is gone.");
+            _stackableChests = Config.Bind("General", "Stackable Chests", true,
+                "Lets storage be placed directly on top of other storage, instead of needing a shelf " +
+                "or floor piece under every chest. Applies to anything with both a Piece and a " +
+                "Container, so modded storage is covered too - not just vanilla chests. Only " +
+                "placement restrictions are relaxed: health, stability, decay and build cost are " +
+                "untouched, so a stacked chest still falls if whatever holds it up is destroyed.");
+            _neutralDefenseOn = Config.Bind("General", "Neutral Defends Player", true,
+                "A Neutral tame within Neutral Defense Radius of you will step in against whatever is " +
+                "currently targeting you, even if it's never hurt the tame itself - defending you isn't " +
+                "picking a fight. If more than one thing is attacking you at once, it picks the highest-HP " +
+                "one. Aggressive already covers this on its own (and more); Passive never does.");
+            _neutralDefenseRadius = Config.Bind("General", "Neutral Defense Radius", 30f,
+                new ConfigDescription(
+                    "How far from the player (not from the tame itself) a Neutral creature will still " +
+                    "notice and step in against something attacking you.",
+                    new AcceptableValueRange<float>(5f, 100f)));
 
             _enrageOn = Config.Bind("Enrage", "Enable Enrage", true,
                 "Master switch for the enrage mechanic - a creature reads the same " +
@@ -708,6 +787,14 @@ namespace CreatureControl
                     "nothing is left to chop. Same reasoning as the successor search radius " +
                     "above - kept in sync by default, but independently tunable.",
                     new AcceptableValueRange<float>(2f, 40f)));
+            _carrySlots = Config.Bind("Logging", "Carry Slots", 10,
+                new ConfigDescription(
+                    "How many different item kinds a logging troll can hold at once, like slots in a " +
+                    "chest. There is no restriction on WHAT goes in a slot - it picks up whatever it " +
+                    "walks near and sorts it into the right chest later. Each slot holds a full stack " +
+                    "of its item. Once every slot is taken it leaves new kinds on the ground until it " +
+                    "has deposited something and freed one up.",
+                    new AcceptableValueRange<int>(1, 50)));
             _passivePickupRadius = Config.Bind("Logging", "Passive Pickup Radius", 6f,
                 new ConfigDescription(
                     "A logging troll auto-picks-up any known tree/ore drop within this radius " +
@@ -723,6 +810,22 @@ namespace CreatureControl
                     "a deposit chest it can't reach gets its items teleported in remotely so " +
                     "the troll can get back to work instead of standing there stuck.",
                     new AcceptableValueRange<float>(5f, 120f)));
+            _leashGraceSeconds = Config.Bind("Logging", "Leash Grace Seconds", 15f,
+                new ConfigDescription(
+                    "How long a logging troll may sit outside its leash radius before it's made to " +
+                    "walk back. Positioning around a tree routinely clips the boundary for a moment, " +
+                    "and reacting the instant it does meant abandoning the job and marching back to " +
+                    "the middle over a step it was about to take back anyway. Set 0 for the old " +
+                    "immediate behaviour.",
+                    new AcceptableValueRange<float>(0f, 120f)));
+            _harvestStuckTimeout = Config.Bind("Logging", "Harvest Stuck Timeout Seconds", 60f,
+                new ConfigDescription(
+                    "How long a logging troll can stand right in range, actively swinging at the " +
+                    "SAME tree/log/stump/rock, before giving up on doing it the normal way. Past " +
+                    "this it force-finishes that target outright - killed instantly, drops swept " +
+                    "straight into carry - so a tougher-than-expected rock or an edge-case that " +
+                    "stops real damage from landing can never leave a troll swinging forever.",
+                    new AcceptableValueRange<float>(15f, 300f)));
             _replantEnabled = Config.Bind("Logging", "Replant Cleared Stumps", true,
                 "Once a logging troll fully clears a tree (log AND stump both gone), it plants a " +
                 "fresh sapling back where the stump stood - no seed consumed, just a direct " +
@@ -782,6 +885,7 @@ namespace CreatureControl
             // Jotunn's own OnVanillaPrefabsAvailable event internally, so this
             // is safe to call before ZNetScene/ObjectDB exist.
             TotemBind.Init();
+            ZoneKeepAlive.Init(_cfgDir);
 
             StartWatching();
             Log.LogInfo($"{NAME} v{VERSION} ready.");
@@ -857,6 +961,13 @@ namespace CreatureControl
                 TrollLogging.Tick();
                 TotemBind.Tick();
             }
+
+            if (NeutralDefenseEnabled) NeutralDefense.Tick();
+
+            // Holds each leash's own zones open so trolls keep working for
+            // real while the player is elsewhere. Returns immediately when
+            // the feature is off or nothing has been remembered yet.
+            ZoneKeepAlive.Tick();
 
             // Cheap: returns immediately once written, and before that it only
             // tests whether ZNetScene has finished registering prefabs.
@@ -1144,28 +1255,77 @@ namespace CreatureControl
 
             Log.LogInfo("[CC target-cmd] key pressed, raycasting...");
 
-            var target = RaycastTarget(player);
-            if (target == null || target.IsDead())
+            if (!RaycastHit(out var hitGo))
             {
                 player.Message(MessageHud.MessageType.Center, "No target.", 0, null, false);
                 return;
             }
-            if (target.IsTamed() || target is Player)
+
+            var target = hitGo.GetComponentInParent<Character>();
+            if (target != null)
             {
-                Log.LogInfo($"[CC target-cmd] raycast hit {target.name}, refused (tamed or player).");
-                player.Message(MessageHud.MessageType.Center, "Can't target a tame or a player.", 0, null, false);
+                if (target.IsDead())
+                {
+                    player.Message(MessageHud.MessageType.Center, "No target.", 0, null, false);
+                    return;
+                }
+                if (target.IsTamed() || target is Player)
+                {
+                    Log.LogInfo($"[CC target-cmd] raycast hit {target.name}, refused (tamed or player).");
+                    player.Message(MessageHud.MessageType.Center, "Can't target a tame or a player.", 0, null, false);
+                    return;
+                }
+
+                int n = ForcedTarget.Command(target);
+                Log.LogInfo($"[CC target-cmd] {target.name} marked - {n} tame(s) commanded.");
+
+                var name = target.m_name;
+                var tameable = target.gameObject.GetComponent<Tameable>();
+                if (tameable != null) name = tameable.GetHoverName();
+
+                player.Message(MessageHud.MessageType.Center,
+                    n > 0 ? $"Attack {name}!" : "No tames to command.", 0, null, false);
                 return;
             }
 
-            int n = ForcedTarget.Command(target);
-            Log.LogInfo($"[CC target-cmd] {target.name} marked - {n} tame(s) commanded.");
+            // Dual-use half: not a Character at all - check whether it's
+            // something a logging troll could actually work (tree, log,
+            // stump, rock/ore). Anything else (a wall, a ship, plain terrain)
+            // falls through to the same "No target." vanilla already gives a
+            // whiffed raycast, rather than a confusing wrong message.
+            var chopRoot = TrollLogging.ResolveChopRoot(hitGo);
+            if (chopRoot == null)
+            {
+                player.Message(MessageHud.MessageType.Center, "No target.", 0, null, false);
+                return;
+            }
 
-            var name = target.m_name;
-            var tameable = target.gameObject.GetComponent<Tameable>();
-            if (tameable != null) name = tameable.GetHoverName();
+            int logN = 0;
+            foreach (var st in CreatureState.AllTracked)
+            {
+                if (st == null || st.Chr == null || st.Mai == null) continue;
+                if (!st.Chr.IsTamed()) continue;
 
+                // MUST be a creature configured as able to log at all
+                // (loggingMode = true - trolls). Without this gate a chop
+                // order went to EVERY tame, so a mis-aimed press would send
+                // a bear or a wolf charging a tree, which is never wanted.
+                if (!st.CanLog) continue;
+
+                // A leashed logging troll always qualifies. One that ISN'T in
+                // logging mode qualifies too when Force Chop Without Leash is
+                // on - that's the "come help me mine this vein" case, where
+                // setting up a whole leash for one rock isn't worth it.
+                bool leashedLogger = st.IsLogging && st.BoundLeash != null;
+                if (!leashedLogger && !Plugin.ForceChopWithoutLeash) continue;
+
+                st.SetForcedChopTarget(chopRoot);
+                logN++;
+            }
+
+            Log.LogInfo($"[CC target-cmd] {chopRoot.name} marked for chopping/mining - {logN} logging tame(s) commanded.");
             player.Message(MessageHud.MessageType.Center,
-                n > 0 ? $"Attack {name}!" : "No tames to command.", 0, null, false);
+                logN > 0 ? $"Log/mine {chopRoot.name}!" : "No logging tames to command.", 0, null, false);
         }
 
         // Same layer set vanilla's own melee attack raycast uses (Player.s_attackMask) -
@@ -1188,21 +1348,23 @@ namespace CreatureControl
             }
         }
 
-        static Character RaycastTarget(Player player)
+        /// <summary>Raw raycast hit for Force Target's dual-use mode - returns
+        /// whatever GameObject the shot actually landed on, Character or not,
+        /// so HandleForceTargetKey can decide which of its two command paths
+        /// applies. Replaces the old Character-only RaycastTarget.</summary>
+        static bool RaycastHit(out GameObject hitGo)
         {
-            if (GameCamera.instance == null) return null;
+            hitGo = null;
+            if (GameCamera.instance == null) return false;
             var cam = GameCamera.instance.transform;
             if (!Physics.Raycast(cam.position, cam.forward, out var hit, ForceTargetRange, TargetRayMask))
             {
                 Log.LogInfo("[CC target-cmd] raycast hit nothing at all.");
-                return null;
+                return false;
             }
 
-            var chr = hit.collider.GetComponentInParent<Character>();
-            if (chr == null)
-                Log.LogInfo($"[CC target-cmd] raycast hit '{hit.collider.name}' " +
-                            $"(layer {LayerMask.LayerToName(hit.collider.gameObject.layer)}), no Character there.");
-            return chr;
+            hitGo = hit.collider.gameObject;
+            return true;
         }
 
         /// <summary>Push freshly-loaded rules onto creatures already in the world,

@@ -149,12 +149,35 @@ namespace CreatureControl
         static int _n;
         static float _nextScan;
 
-        public static void Reset() { _n = 0; _nextScan = 0f; }
+        // Same idea, same timer, for real placed chests - every chest lookup
+        // below used to call FindObjectsByType<Container>() itself, which was
+        // fine while those calls were rare (an occasional deposit-trip pick),
+        // but became the same class of bug as the Piece scan above the moment
+        // PassiveDepositWood needed to check on every logging tick instead of
+        // only once wood hit its threshold. One shared, timer-gated scan for
+        // every logging troll instead of one raw scan per troll per tick.
+        static Container[] _chestSnap = new Container[8];
+        static int _chestN;
+
+        public static void Reset() { _n = 0; _chestN = 0; _nextScan = 0f; }
 
         public static void Tick()
         {
             if (Time.time < _nextScan) return;
             _nextScan = Time.time + Plugin.LoggingLeashScanInterval;
+
+            // FindObjectsByType<Piece> walks EVERY placed building piece in
+            // the loaded world - a real base can easily have thousands, and
+            // until this check existed this ran unconditionally every
+            // interval as long as the LOGGING FEATURE was merely enabled,
+            // whether or not anything was actually logging. Skipped entirely
+            // unless at least one tracked creature is currently in logging
+            // mode - see the identical reasoning in TrollLogging.Tick.
+            bool anyoneLogging = false;
+            foreach (var st in CreatureState.AllTracked)
+                if (st.IsLogging) { anyoneLogging = true; break; }
+            if (!anyoneLogging) return;
+
             Rebuild();
         }
 
@@ -183,6 +206,22 @@ namespace CreatureControl
 
                 if (_n >= _snap.Length) Array.Resize(ref _snap, _snap.Length * 2);
                 _snap[_n++] = go;
+
+                // Remembered independently of the piece itself: once this
+                // zone unloads the leash GameObject goes with it, so there
+                // would be nothing left to find and nothing to hold the area
+                // open. See ZoneKeepAlive.
+                ZoneKeepAlive.Remember(go.transform.position);
+            }
+
+            _chestN = 0;
+            var allContainers = UnityEngine.Object.FindObjectsByType<Container>(FindObjectsSortMode.None);
+            for (int i = 0; i < allContainers.Length; i++)
+            {
+                var c = allContainers[i];
+                if (c == null || !IsRealChest(c)) continue;
+                if (_chestN >= _chestSnap.Length) Array.Resize(ref _chestSnap, _chestSnap.Length * 2);
+                _chestSnap[_chestN++] = c;
             }
         }
 
@@ -234,7 +273,35 @@ namespace CreatureControl
         /// nearest unnamed Container in range and silently absorbed every
         /// deposit that didn't match a named chest). Every real placed piece
         /// carries a Piece component; a dynamically-spawned proxy does not.</summary>
-        static bool IsRealChest(Container c) => c.GetComponent<Piece>() != null;
+        ///
+        /// Also must be PLACED BY A PLAYER: world-generated containers (the
+        /// buried treasure chests, dungeon loot chests) are real pieces too,
+        /// and were receiving deposits - confirmed live as Wood, Stone and
+        /// Resin going into 'TreasureChest_meadows_buried'.
+        static bool IsRealChest(Container c)
+        {
+            var p = c.GetComponent<Piece>();
+            return p != null && p.IsPlacedByPlayer();
+        }
+
+        /// <summary>True if any named chest inside this leash's radius
+        /// accepts <paramref name="item"/>. That is what makes an item
+        /// "catalogued": it has a dedicated home, so it must never be
+        /// dropped into an unnamed catch-all chest just because one happened
+        /// to be closer.</summary>
+        public static bool HasNamedChestFor(Vector3 leashPos, string item)
+        {
+            float rSq = Plugin.LoggingLeashRadius * Plugin.LoggingLeashRadius;
+            for (int i = 0; i < _chestN; i++)
+            {
+                var c = _chestSnap[i];
+                if (c == null) continue;
+                if ((c.transform.position - leashPos).sqrMagnitude > rSq) continue;
+                string name = StorageNaming.GetName(c);
+                if (!string.IsNullOrEmpty(name) && StorageNaming.Accepts(name, item)) return true;
+            }
+            return false;
+        }
 
         /// <summary>Nearest vanilla Container within the SAME leash's radius -
         /// measured from the leash, not the troll, so a chest at the far edge
@@ -242,19 +309,14 @@ namespace CreatureControl
         /// inside it.</summary>
         public static GameObject FindNearestChest(Vector3 leashPos)
         {
-            // Containers enumerate directly - no need to go through every
-            // Piece and filter, now that this isn't reading the private
-            // Piece.m_allPieces list anyway.
-            var all = UnityEngine.Object.FindObjectsByType<Container>(FindObjectsSortMode.None);
-
             GameObject best = null;
             float bestSq = float.MaxValue;
             float rSq = Plugin.LoggingLeashRadius * Plugin.LoggingLeashRadius;
 
-            for (int i = 0; i < all.Length; i++)
+            for (int i = 0; i < _chestN; i++)
             {
-                var c = all[i];
-                if (c == null || !IsRealChest(c)) continue;
+                var c = _chestSnap[i];
+                if (c == null) continue;
                 var go = c.gameObject;
                 if (go == null) continue;
 
@@ -273,16 +335,15 @@ namespace CreatureControl
         /// chest, exactly like FindNearestChest above.</summary>
         public static GameObject FindDepositChest(Vector3 leashPos, IEnumerable<string> carriedItems)
         {
-            var all = UnityEngine.Object.FindObjectsByType<Container>(FindObjectsSortMode.None);
             float rSq = Plugin.LoggingLeashRadius * Plugin.LoggingLeashRadius;
 
             GameObject bestNamed = null; float bestNamedSq = float.MaxValue;
             GameObject bestUnnamed = null; float bestUnnamedSq = float.MaxValue;
 
-            for (int i = 0; i < all.Length; i++)
+            for (int i = 0; i < _chestN; i++)
             {
-                var c = all[i];
-                if (c == null || !IsRealChest(c)) continue;
+                var c = _chestSnap[i];
+                if (c == null) continue;
                 var go = c.gameObject;
                 if (go == null) continue;
 
@@ -319,16 +380,23 @@ namespace CreatureControl
         /// right now.</summary>
         public static GameObject FindChestWithinRange(Vector3 pos, float range, IEnumerable<string> items)
         {
-            var all = UnityEngine.Object.FindObjectsByType<Container>(FindObjectsSortMode.None);
             float rSq = range * range;
 
-            GameObject best = null;
-            float bestSq = float.MaxValue;
+            // Named-first, exactly like FindDepositChest - tracked separately
+            // rather than taking whichever accepting chest happens to be
+            // nearest. An unnamed chest accepts EVERYTHING, so a nearest-wins
+            // search handed it the entire load whenever it sat closer than
+            // the sorted chests, and since this runs every tick on walk-by it
+            // emptied the troll into the catch-all before the deliberate
+            // named-chest trip ever had a chance to fire. Confirmed live as
+            // "deposits strictly into the unnamed chest".
+            GameObject bestNamed = null; float bestNamedSq = float.MaxValue;
+            GameObject bestUnnamed = null; float bestUnnamedSq = float.MaxValue;
 
-            for (int i = 0; i < all.Length; i++)
+            for (int i = 0; i < _chestN; i++)
             {
-                var c = all[i];
-                if (c == null || !IsRealChest(c)) continue;
+                var c = _chestSnap[i];
+                if (c == null) continue;
                 var go = c.gameObject;
                 if (go == null) continue;
 
@@ -336,15 +404,26 @@ namespace CreatureControl
                 if (sq > rSq) continue;
 
                 string storageName = StorageNaming.GetName(c);
-                bool accepts = string.IsNullOrEmpty(storageName);
-                if (!accepts)
-                    foreach (var item in items)
-                        if (StorageNaming.Accepts(storageName, item)) { accepts = true; break; }
+                if (string.IsNullOrEmpty(storageName))
+                {
+                    if (sq < bestUnnamedSq) { bestUnnamedSq = sq; bestUnnamed = go; }
+                    continue;
+                }
 
-                if (accepts && sq < bestSq) { bestSq = sq; best = go; }
+                foreach (var item in items)
+                {
+                    if (StorageNaming.Accepts(storageName, item))
+                    {
+                        if (sq < bestNamedSq) { bestNamedSq = sq; bestNamed = go; }
+                        break;
+                    }
+                }
             }
 
-            return best;
+            // Deposit() itself only ever moves what the chosen chest actually
+            // accepts, so picking the named one leaves everything else in
+            // carry for the next chest rather than stranding it.
+            return bestNamed != null ? bestNamed : bestUnnamed;
         }
     }
 }
